@@ -33,7 +33,8 @@ ALLOW_SHORTING = True       # shorting allowed — but only when legally permitt
                             # (enough buying power AND the asset is shortable)
 
 # ── The brain ────────────────────────────────────────────────────────────────
-MODEL = "claude-opus-4-8"
+MODEL = "claude-opus-4-8"        # decision model — premium judgment where it counts
+NEWS_MODEL = "claude-haiku-4-5"  # news/search model — cheap; Opus stays on the decision
 RECENT_TRADES_FOR_CONTEXT = 10   # past trades fed to Claude as memory each run
 
 # ── Accounts / runtime ───────────────────────────────────────────────────────

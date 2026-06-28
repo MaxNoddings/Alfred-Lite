@@ -1,8 +1,9 @@
 """The brain: deterministic signals + recent-trade memory + live news → a decision.
 
-Two Claude (Opus 4.8) calls:
-  1. _gather_news   — web_search pulls recent, market-moving news on the candidates.
-  2. _make_decision — a structured JSON decision via output_config.format.
+Two Claude calls:
+  1. _gather_news   — web_search pulls recent, market-moving news on the candidates
+                      (NEWS_MODEL — the cost lever).
+  2. _make_decision — a structured JSON decision via output_config.format (MODEL).
 
 They're split because web search can attach citations, which are incompatible with
 structured outputs; searching first, then deciding, keeps both.
@@ -19,7 +20,9 @@ Decision contract returned to the caller:
         }, ...
       ],
       "market_note": str,
-      "_news": str,            # news context, attached for logging (not from the schema)
+      "_news": str,          # news context, attached for logging (not from the schema)
+      "_usage": {"news": {...}, "decision": {...}},
+      "_cost_usd": float,    # estimated cost of this run
     }
 """
 from __future__ import annotations
@@ -32,9 +35,28 @@ from .broker import Portfolio, format_portfolio
 
 log = logging.getLogger(__name__)
 
-# Cap searches so a single run can't spend minutes searching — bounds latency for
-# the 15-minute cadence.
-_WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 6}
+# The 20260209 (dynamic-filtering) web_search runs code execution under the hood and
+# is only supported on Opus 4.6+/Sonnet 4.6. Cheaper/older models (e.g. Haiku) must use
+# the basic 20250305 variant. max_uses caps searches so a run can't spend minutes (and
+# dollars) searching unbounded.
+_DYNAMIC_SEARCH_MODELS = {
+    "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6",
+}
+
+
+def _web_search_tool(model: str) -> dict:
+    variant = (
+        "web_search_20260209" if model in _DYNAMIC_SEARCH_MODELS else "web_search_20250305"
+    )
+    return {"type": variant, "name": "web_search", "max_uses": 6}
+
+# Per-1M-token prices (input, output); web search billed per request ($10 / 1k).
+_PRICES = {
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+_WEB_SEARCH_USD = 0.01
 
 DECISION_SCHEMA = {
     "type": "object",
@@ -107,29 +129,70 @@ def _client():
     return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
-def _gather_news(client, rows: list[dict]) -> str:
+# ── usage / cost accounting ───────────────────────────────────────────────────
+def _blank_usage() -> dict:
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "web_searches": 0,
+    }
+
+
+def _add_usage(acc: dict, resp) -> dict:
+    u = resp.usage
+    acc["input_tokens"] += getattr(u, "input_tokens", 0) or 0
+    acc["output_tokens"] += getattr(u, "output_tokens", 0) or 0
+    acc["cache_read"] += getattr(u, "cache_read_input_tokens", 0) or 0
+    acc["cache_write"] += getattr(u, "cache_creation_input_tokens", 0) or 0
+    stu = getattr(u, "server_tool_use", None)
+    if stu is not None:
+        acc["web_searches"] += getattr(stu, "web_search_requests", 0) or 0
+    return acc
+
+
+def _cost(usage: dict, model: str) -> float:
+    inp, out = _PRICES.get(model, (5.0, 25.0))
+    return (
+        usage["input_tokens"] / 1e6 * inp
+        + usage["output_tokens"] / 1e6 * out
+        + usage["cache_read"] / 1e6 * inp * 0.1
+        + usage["cache_write"] / 1e6 * inp * 1.25
+        + usage["web_searches"] * _WEB_SEARCH_USD
+    )
+
+
+# ── the two steps ─────────────────────────────────────────────────────────────
+def _gather_news(client, rows: list[dict]) -> tuple[str, dict]:
     tickers = [r["ticker"] for r in rows]
     prompt = (
         "Search for the most recent (last 1-2 trading days) market-moving news on these "
         f"tickers: {', '.join(tickers)}. For each ticker WITH notable news, give 1-2 "
         "concise bullets (earnings, guidance, analyst actions, product / regulatory / "
-        "macro). Omit tickers with nothing notable. Keep the whole summary tight."
+        "macro). Omit tickers with nothing notable. Keep the whole summary tight. "
+        "Output ONLY the final news summary — do not narrate your search process or "
+        "add any preamble."
     )
     messages = [{"role": "user", "content": prompt}]
+    usage = _blank_usage()
+    tool = _web_search_tool(config.NEWS_MODEL)
     resp = client.messages.create(
-        model=config.MODEL, max_tokens=4000, tools=[_WEB_SEARCH_TOOL], messages=messages
+        model=config.NEWS_MODEL, max_tokens=4000, tools=[tool], messages=messages
     )
+    _add_usage(usage, resp)
     guard = 0
     while resp.stop_reason == "pause_turn" and guard < 4:        # server-tool loop limit
         messages.append({"role": "assistant", "content": resp.content})
         resp = client.messages.create(
-            model=config.MODEL, max_tokens=4000, tools=[_WEB_SEARCH_TOOL], messages=messages
+            model=config.NEWS_MODEL, max_tokens=4000, tools=[tool], messages=messages
         )
+        _add_usage(usage, resp)
         guard += 1
-    # The final text block is the clean summary; earlier blocks are between-search
-    # narration ("Let me search...") — drop them.
-    texts = [b.text for b in resp.content if b.type == "text" and b.text.strip()]
-    return texts[-1].strip() if texts else ""
+    # Join ALL text blocks — the summary can span several (esp. with the basic search
+    # variant). Completeness matters more than dropping a little search narration.
+    text = "\n".join(b.text for b in resp.content if b.type == "text" and b.text.strip())
+    return text.strip(), usage
 
 
 def _format_recent_trades(recent_trades: list[dict]) -> str:
@@ -145,7 +208,7 @@ def _format_recent_trades(recent_trades: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _make_decision(client, rows, portfolio, recent_trades, news) -> dict:
+def _make_decision(client, rows, portfolio, recent_trades, news) -> tuple[dict, dict]:
     user = (
         "=== SIGNALS ===\n"
         f"{signals_mod.format_table(rows)}\n\n"
@@ -165,8 +228,9 @@ def _make_decision(client, rows, portfolio, recent_trades, news) -> dict:
         output_config={"format": {"type": "json_schema", "schema": DECISION_SCHEMA}},
         messages=[{"role": "user", "content": user}],
     )
+    usage = _add_usage(_blank_usage(), resp)
     text = next(b.text for b in resp.content if b.type == "text")
-    return json.loads(text)
+    return json.loads(text), usage
 
 
 def decide(
@@ -174,11 +238,20 @@ def decide(
 ) -> dict:
     """Run the two-step brain and return the decision dict (see module docstring)."""
     if not signals:
-        return {"decisions": [], "market_note": "no signals available", "_news": ""}
+        return {
+            "decisions": [],
+            "market_note": "no signals available",
+            "_news": "",
+            "_usage": {},
+            "_cost_usd": 0.0,
+        }
     client = _client()
-    log.info("brain: gathering news for %d tickers", len(signals))
-    news = _gather_news(client, signals)
-    log.info("brain: making decision")
-    result = _make_decision(client, signals, portfolio, recent_trades, news)
+    log.info("brain: gathering news for %d tickers (model %s)", len(signals), config.NEWS_MODEL)
+    news, news_usage = _gather_news(client, signals)
+    log.info("brain: making decision (model %s)", config.MODEL)
+    result, dec_usage = _make_decision(client, signals, portfolio, recent_trades, news)
+
     result["_news"] = news
+    result["_usage"] = {"news": news_usage, "decision": dec_usage}
+    result["_cost_usd"] = _cost(news_usage, config.NEWS_MODEL) + _cost(dec_usage, config.MODEL)
     return result

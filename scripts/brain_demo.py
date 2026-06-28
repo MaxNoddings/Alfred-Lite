@@ -69,6 +69,12 @@ def main() -> None:
     print("\n=== DECISIONS ===")
     _print_decisions(result["decisions"])
 
+    print("\n=== COST ===")
+    u = result["_usage"]
+    print(f"news     ({config.NEWS_MODEL}): {u['news']}")
+    print(f"decision ({config.MODEL}): {u['decision']}")
+    print(f"estimated total this run: ${result['_cost_usd']:.4f}")
+
     pathlib.Path(STATE).unlink(missing_ok=True)
     print("\n(demo state cleaned up)")
 
