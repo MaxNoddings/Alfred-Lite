@@ -1,0 +1,50 @@
+name: alfred-lite
+
+on:
+  schedule:
+    # Every 30 min during ~US market hours (cron is UTC). EDT market 9:30-16:00 ET
+    # = 13:30-20:00 UTC. main.py gates on Alpaca's clock for the exact window, so
+    # the pre-open 13:00 fire just no-ops.
+    - cron: "0,30 13-20 * * 1-5"
+  workflow_dispatch: {}            # manual "Run workflow" button
+
+permissions:
+  contents: write                  # to commit trades.csv back to the repo
+
+concurrency:
+  group: alfred-lite               # never let two runs overlap
+  cancel-in-progress: false
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Alfred
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          ALPACA_PAPER: "true"
+          BROKER: alpaca
+        run: python main.py
+
+      - name: Commit trade log
+        run: |
+          git config user.name "alfred-lite-bot"
+          git config user.email "actions@users.noreply.github.com"
+          if [ -n "$(git status --porcelain trades.csv)" ]; then
+            git add trades.csv
+            git commit -m "Log trades [skip ci]"
+            git push
+          else
+            echo "no new trades to log"
+          fi
