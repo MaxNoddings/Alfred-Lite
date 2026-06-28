@@ -25,7 +25,12 @@ SMA_SLOW = 20
 LOOKBACK_DAYS = 60          # history pulled per run to compute the above
 
 # ── Guardrails (risk management, applied AFTER the brain) ─────────────────────
-MAX_POSITION_PCT = 0.20     # cap any single position at 20% of equity
+# Position size scales with the brain's confidence: a max-conviction idea may reach
+# MAX_POSITION_PCT, a marginal one is held to BASE_POSITION_PCT. "Bet bigger when the
+# edge is bigger" — enforced. The gross cap keeps the whole book within equity (no margin).
+MAX_POSITION_PCT = 0.45     # cap a top-conviction position at 45% of equity
+BASE_POSITION_PCT = 0.10    # cap a low-conviction position at 10% of equity
+MAX_GROSS_EXPOSURE = 1.00   # long + short exposure <= 100% of equity — NO leverage
 MAX_POSITIONS = 5           # max concurrent positions (long or short)
 MIN_ORDER_USD = 1.0         # don't submit dust (Alpaca's fractional floor)
 COOLDOWN_MINUTES = 45       # soft anti-churn: don't fully reverse within this window
@@ -82,8 +87,8 @@ def summary() -> str:
         f"broker        : {BROKER}",
         f"model         : {MODEL}",
         f"watchlist     : {', '.join(WATCHLIST)}",
-        f"max position  : {MAX_POSITION_PCT:.0%} of equity",
-        f"max positions : {MAX_POSITIONS}",
+        f"position size : {BASE_POSITION_PCT:.0%}-{MAX_POSITION_PCT:.0%} by conviction",
+        f"max positions : {MAX_POSITIONS}  ·  gross <= {MAX_GROSS_EXPOSURE:.0%} (no margin)",
         f"shorting      : {'on (legal only)' if ALLOW_SHORTING else 'off'}",
         f"cooldown      : {COOLDOWN_MINUTES} min",
         f"stop / trail  : -{STOP_LOSS_PCT:.0%} stop | arm +{TRAIL_ACTIVATE_PCT:.0%}, "

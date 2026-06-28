@@ -108,8 +108,11 @@ For each ticker you want to open, resize, or exit, output a decision:
 logged — make it count.
 
 Discipline (respect these; hard limits are also enforced downstream):
-- Never target more than 20% of equity in one position (|target_pct| <= 0.20).
-- Keep total positions to 5 or fewer.
+- SIZE BY CONVICTION: your `confidence` sets how large a position may be — a \
+high-conviction call can run up to 45% of equity, a marginal one stays near 10%. Use \
+the full range and put real weight behind your best ideas; don't spray thin bets.
+- Keep the whole book within 100% of equity — NO leverage (long exposure + short \
+exposure <= equity). Keep total positions to 5 or fewer.
 - Only short with a clear bearish case on a liquid, shortable name.
 - AVOID CHURN: do not reverse or thrash a position you opened in the last hour unless \
 the thesis has genuinely broken. Holding is valid — often the best choice.
