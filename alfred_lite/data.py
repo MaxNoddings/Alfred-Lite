@@ -1,4 +1,4 @@
-"""Market data: OHLCV bars for the watchlist.
+"""Market data: OHLCV bars (and latest prices) for the watchlist.
 
 yfinance for historical / last-close (weekend-friendly, no account needed).
 Alpaca's data API can be swapped in for live intraday later behind the same shape.
@@ -39,3 +39,11 @@ def fetch_bars(tickers: list[str], lookback_days: int) -> dict:
         cols = [c for c in _OHLCV if c in df.columns]
         out[ticker] = df[cols].dropna()
     return out
+
+
+def latest_prices(tickers: list[str]) -> dict[str, float]:
+    """Return {ticker: most-recent close} for the given tickers (empty in → empty out)."""
+    if not tickers:
+        return {}
+    bars = fetch_bars(list(tickers), lookback_days=7)
+    return {t: float(df["Close"].iloc[-1]) for t, df in bars.items() if not df.empty}
