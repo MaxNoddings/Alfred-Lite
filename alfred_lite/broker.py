@@ -163,10 +163,63 @@ class SimBroker:
 
 # ── AlpacaBroker ──────────────────────────────────────────────────────────────
 class AlpacaBroker:
-    """Live paper trading via alpaca-py (lazy-imports alpaca). TODO Phase 5."""
+    """Live paper trading via alpaca-py. State (cash, positions) lives on Alpaca's
+    servers, so this stays a thin wrapper — perfect for the stateless runner.
+    """
 
     def __init__(self) -> None:
-        raise NotImplementedError("AlpacaBroker — Phase 5")
+        from alpaca.trading.client import TradingClient
+
+        if not (config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY):
+            raise RuntimeError("ALPACA_API_KEY / ALPACA_SECRET_KEY not set in .env")
+        self.client = TradingClient(
+            config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY, paper=config.ALPACA_PAPER
+        )
+        self._shortable: dict[str, bool] = {}          # asset lookups are cached per run
+
+    def snapshot(self) -> Portfolio:
+        acct = self.client.get_account()
+        positions: dict[str, Position] = {}
+        for p in self.client.get_all_positions():
+            positions[p.symbol] = Position(
+                ticker=p.symbol,
+                qty=round(float(p.qty), 4),
+                avg_price=round(float(p.avg_entry_price), 4),
+                market_value=round(float(p.market_value), 2),
+                unrealized_pl=round(float(p.unrealized_pl), 2),
+            )
+        return Portfolio(
+            cash=round(float(acct.cash), 2),
+            equity=round(float(acct.equity), 2),
+            buying_power=round(float(acct.buying_power), 2),
+            positions=positions,
+        )
+
+    def submit(self, ticker: str, side: str, notional: float) -> None:
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        from alpaca.trading.requests import MarketOrderRequest
+
+        order = MarketOrderRequest(
+            symbol=ticker,
+            notional=round(notional, 2),               # dollar amount -> fractional shares
+            side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+        )
+        self.client.submit_order(order_data=order)
+        log.info("ALPACA %s %s $%.2f", side, ticker, notional)
+
+    def is_market_open(self) -> bool:
+        return bool(self.client.get_clock().is_open)
+
+    def is_shortable(self, ticker: str) -> bool:
+        if ticker not in self._shortable:
+            try:
+                asset = self.client.get_asset(ticker)
+                self._shortable[ticker] = bool(asset.shortable and asset.easy_to_borrow)
+            except Exception as exc:                   # noqa: BLE001 - treat unknown as no
+                log.warning("shortable check failed for %s: %s", ticker, exc)
+                self._shortable[ticker] = False
+        return self._shortable[ticker]
 
 
 # ── factory + formatting ──────────────────────────────────────────────────────

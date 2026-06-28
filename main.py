@@ -25,7 +25,11 @@ def _execute(broker, orders: list[dict], market_note: str) -> list[dict]:
         if price is None:
             log.warning("no price for %s — skipping order", o["ticker"])
             continue
-        broker.submit(o["ticker"], o["side"], o["notional"])
+        try:
+            broker.submit(o["ticker"], o["side"], o["notional"])
+        except Exception as exc:                       # one reject shouldn't kill the run
+            log.warning("order failed for %s: %s", o["ticker"], exc)
+            continue
         executed.append({
             "timestamp": ts,
             "ticker": o["ticker"],
