@@ -37,6 +37,11 @@ MODEL = "claude-opus-4-8"        # decision model — premium judgment where it 
 NEWS_MODEL = "claude-haiku-4-5"  # news/search model — cheap; Opus stays on the decision
 RECENT_TRADES_FOR_CONTEXT = 10   # past trades fed to Claude as memory each run
 
+# Candidate filtering: only research news for held positions + tickers carrying one of
+# these "notable" flags, capped — cuts news cost and sharpens coverage. (Tune freely.)
+NEWS_CANDIDATE_FLAGS = {"oversold", "overbought", "stretched_low", "stretched_high"}
+MAX_NEWS_CANDIDATES = 6
+
 # ── Accounts / runtime ───────────────────────────────────────────────────────
 BROKER = os.getenv("BROKER", "sim").lower()         # "sim" | "alpaca"
 STARTING_CASH = 100_000.0                            # SimBroker starting balance
@@ -47,7 +52,8 @@ ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 ALPACA_PAPER = os.getenv("ALPACA_PAPER", "true").lower() == "true"
 
 # ── Logging ──────────────────────────────────────────────────────────────────
-TRADES_CSV = "trades.csv"
+# Live (alpaca) log is committed back from the runner; the sim log stays local.
+TRADES_CSV = "trades.csv" if BROKER == "alpaca" else "trades_sim.csv"
 
 
 def summary() -> str:

@@ -233,6 +233,25 @@ def _make_decision(client, rows, portfolio, recent_trades, news) -> tuple[dict, 
     return json.loads(text), usage
 
 
+def _news_candidates(rows: list[dict], portfolio: Portfolio) -> list[dict]:
+    """Pick the tickers worth researching: held positions + flagged names, capped.
+
+    The decision step still sees ALL signals; only the (costly) news step is
+    narrowed. Falls back to the most-stretched names if nothing stands out.
+    """
+    held = set(portfolio.positions)
+    held_rows = [r for r in rows if r["ticker"] in held]
+    flagged = [r for r in rows if set(r["flags"]) & config.NEWS_CANDIDATE_FLAGS]
+    ordered, seen = [], set()
+    for r in held_rows + sorted(flagged, key=lambda x: -abs(x["zscore_20"])):
+        if r["ticker"] not in seen:
+            seen.add(r["ticker"])
+            ordered.append(r)
+    if not ordered:
+        ordered = sorted(rows, key=lambda x: -abs(x["zscore_20"]))[:3]
+    return ordered[: config.MAX_NEWS_CANDIDATES]
+
+
 def decide(
     signals: list[dict], portfolio: Portfolio, recent_trades: list[dict]
 ) -> dict:
@@ -246,8 +265,12 @@ def decide(
             "_cost_usd": 0.0,
         }
     client = _client()
-    log.info("brain: gathering news for %d tickers (model %s)", len(signals), config.NEWS_MODEL)
-    news, news_usage = _gather_news(client, signals)
+    candidates = _news_candidates(signals, portfolio)
+    log.info(
+        "brain: gathering news for %d/%d tickers (model %s)",
+        len(candidates), len(signals), config.NEWS_MODEL,
+    )
+    news, news_usage = _gather_news(client, candidates)
     log.info("brain: making decision (model %s)", config.MODEL)
     result, dec_usage = _make_decision(client, signals, portfolio, recent_trades, news)
 
