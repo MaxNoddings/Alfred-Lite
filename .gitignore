@@ -4,3 +4,4 @@ __pycache__/
 .env
 state*.json
 trades_sim.csv
+risk_state_sim.json

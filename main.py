@@ -8,7 +8,7 @@ import datetime as dt
 import logging
 
 from alfred_lite import broker as bk
-from alfred_lite import brain, config, data, executor, logbook, signals
+from alfred_lite import brain, config, data, executor, logbook, risk, signals
 
 log = logging.getLogger(__name__)
 
@@ -45,10 +45,10 @@ def _execute(broker, orders: list[dict], market_note: str) -> list[dict]:
     return executed
 
 
-def main() -> None:
+def main(risk_only: bool = False) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     print("=" * 60)
-    print("  🤵  ALFRED LITE")
+    print(f"  🤵  ALFRED LITE{'  ·  risk sweep' if risk_only else ''}")
     print("=" * 60)
     print(config.summary())
     print("-" * 60)
@@ -58,16 +58,36 @@ def main() -> None:
         print("market closed — nothing to do.")
         return
 
+    portfolio = broker.snapshot()
+    forced_exits, _ = risk.evaluate(portfolio)          # update peaks, find stop/trail exits
+
+    # Risk sweep: no brain, no data fetch — just enforce stops/trails and exit.
+    if risk_only:
+        orders = executor.plan_orders([], portfolio, [], broker, forced_exits=forced_exits)
+        executed = _execute(broker, orders, "risk sweep")
+        if executed:
+            post = broker.snapshot()
+            for r in executed:
+                r["equity"], r["cash"] = round(post.equity, 2), round(post.cash, 2)
+            logbook.append(executed)
+        print(f"\nrisk sweep: {len(executed)} exit(s)" + (":" if executed else " — all clear"))
+        for r in executed:
+            print(f"  {r['side'].upper():<4} {r['ticker']:<5} ${r['notional']:>10,.2f}   {r['reasoning']}")
+        print("\n=== PORTFOLIO ===")
+        print(bk.format_portfolio(broker.snapshot()))
+        return
+
     bars = data.fetch_bars(config.WATCHLIST, config.LOOKBACK_DAYS)
     rows = signals.compute_signals(bars)
-    portfolio = broker.snapshot()
     recent = logbook.recent_trades(config.RECENT_TRADES_FOR_CONTEXT)
 
     result = brain.decide(rows, portfolio, recent)
     print(f"\nmarket note: {result.get('market_note', '')}")
     print(f"brain cost : ${result.get('_cost_usd', 0):.4f}")
 
-    orders = executor.plan_orders(result["decisions"], portfolio, recent, broker)
+    orders = executor.plan_orders(
+        result["decisions"], portfolio, recent, broker, forced_exits=forced_exits
+    )
     executed = _execute(broker, orders, result.get("market_note", ""))
     if executed:
         post = broker.snapshot()                       # stamp each row with post-trade state
@@ -91,4 +111,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    main(risk_only="--risk-only" in sys.argv)

@@ -32,18 +32,41 @@ def _recent_by_ticker(recent_trades: list[dict]) -> dict:
     return out
 
 
-def plan_orders(decisions, portfolio, recent_trades, broker, now=None) -> list[dict]:
-    """Apply guardrails to the brain's decisions and return executable orders."""
+def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_exits=None) -> list[dict]:
+    """Apply guardrails to the brain's decisions and return executable orders.
+
+    `forced_exits` (from the risk overlay) is a list of {ticker, reason}. Those
+    positions are flattened first — overriding any brain decision for the same
+    ticker and bypassing the anti-churn cooldown (risk is non-negotiable).
+    """
     now = now or dt.datetime.now(dt.timezone.utc)
     recent = _recent_by_ticker(recent_trades)
     equity = portfolio.equity
     open_count = len(portfolio.positions)
     cap = config.MAX_POSITION_PCT
 
+    forced = {f["ticker"]: f["reason"] for f in (forced_exits or [])}
     orders: list[dict] = []
+
+    # 1) Risk exits first — flatten to zero, override the brain, ignore the cooldown.
+    for ticker, reason in forced.items():
+        pos = portfolio.positions.get(ticker)
+        if not pos or abs(pos.market_value) < config.MIN_ORDER_USD:
+            continue
+        orders.append({
+            "ticker": ticker,
+            "side": "sell" if pos.qty > 0 else "buy",   # flatten long or cover short
+            "notional": round(abs(pos.market_value), 2),
+            "action": "exit",
+            "target_pct": 0.0,
+            "confidence": None,
+            "reasoning": f"risk exit: {reason}",
+        })
+
+    # 2) Brain decisions — skip anything we're force-exiting this run.
     for d in decisions:
         ticker = d["ticker"]
-        if d.get("action") == "hold":
+        if ticker in forced or d.get("action") == "hold":
             continue
 
         target = max(-cap, min(cap, float(d["target_pct"])))       # clamp to size cap

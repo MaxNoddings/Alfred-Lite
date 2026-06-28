@@ -32,6 +32,13 @@ COOLDOWN_MINUTES = 45       # soft anti-churn: don't fully reverse within this w
 ALLOW_SHORTING = True       # shorting allowed — but only when legally permitted
                             # (enough buying power AND the asset is shortable)
 
+# ── Asymmetric exits (risk overlay — deterministic, OVERRIDES the brain) ──────
+# Cut losers fast, ride winners. Evaluated every run from the live snapshot; cheap
+# enough (no brain) to also run on a tight cron between full trading runs.
+STOP_LOSS_PCT = 0.08        # hard exit if a position falls this far below entry
+TRAIL_ACTIVATE_PCT = 0.10   # profit needed to arm the trailing take-profit
+TRAIL_GIVEBACK_PCT = 0.05   # once armed, exit on this much pullback from the peak
+
 # ── The brain ────────────────────────────────────────────────────────────────
 MODEL = "claude-opus-4-8"        # decision model — premium judgment where it counts
 NEWS_MODEL = "claude-haiku-4-5"  # news/search model — cheap; Opus stays on the decision
@@ -54,6 +61,9 @@ ALPACA_PAPER = os.getenv("ALPACA_PAPER", "true").lower() == "true"
 # ── Logging ──────────────────────────────────────────────────────────────────
 # Live (alpaca) log is committed back from the runner; the sim log stays local.
 TRADES_CSV = "trades.csv" if BROKER == "alpaca" else "trades_sim.csv"
+# Trailing-stop high-water marks persist here between stateless runs (committed back
+# from the runner, like trades.csv; the sim copy stays local).
+RISK_STATE_JSON = "risk_state.json" if BROKER == "alpaca" else "risk_state_sim.json"
 
 
 def summary() -> str:
@@ -76,6 +86,8 @@ def summary() -> str:
         f"max positions : {MAX_POSITIONS}",
         f"shorting      : {'on (legal only)' if ALLOW_SHORTING else 'off'}",
         f"cooldown      : {COOLDOWN_MINUTES} min",
+        f"stop / trail  : -{STOP_LOSS_PCT:.0%} stop | arm +{TRAIL_ACTIVATE_PCT:.0%}, "
+        f"give back {TRAIL_GIVEBACK_PCT:.0%}",
         f"keys set      : {keys_set}",
     ]
     return "\n".join(lines)
