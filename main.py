@@ -80,6 +80,7 @@ def main(risk_only: bool = False) -> None:
     tickers = universe.build(list(portfolio.positions))
     bars = data.fetch_bars(tickers, config.LOOKBACK_DAYS)
     rows = signals.compute_signals(bars)
+    rows = universe.enforce_price_floor(rows, list(portfolio.positions))   # penny-stock guard
     recent = logbook.recent_trades(config.RECENT_TRADES_FOR_CONTEXT)
 
     result = brain.decide(rows, portfolio, recent)

@@ -58,6 +58,29 @@ def _screener_movers() -> list[str]:
     return picks[: config.MAX_MOVERS]
 
 
+def enforce_price_floor(rows: list[dict], held_tickers: list[str] | None = None) -> list[dict]:
+    """Drop dynamically-added names trading below MOVER_MIN_PRICE — the penny-stock guard.
+
+    Applied to the *real fetched close*, so it catches junk from any source — including
+    the most-actives backfill, which the screener returns with no price to pre-filter on.
+    Core watchlist and currently-held names are always exempt.
+    """
+    protected = {t.upper() for t in config.WATCHLIST}
+    protected |= {t.upper() for t in (held_tickers or [])}
+    kept, dropped = [], []
+    for r in rows:
+        if r["ticker"].upper() in protected or r["close"] >= config.MOVER_MIN_PRICE:
+            kept.append(r)
+        else:
+            dropped.append(r["ticker"])
+    if dropped:
+        log.info(
+            "price floor: dropped %d sub-$%.0f name(s): %s",
+            len(dropped), config.MOVER_MIN_PRICE, ", ".join(dropped),
+        )
+    return kept
+
+
 def build(held_tickers: list[str] | None = None) -> list[str]:
     """Return the run's universe: core + movers + held, deduped (core first, held last)."""
     universe: list[str] = []

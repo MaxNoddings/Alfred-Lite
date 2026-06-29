@@ -21,7 +21,8 @@ WATCHLIST: list[str] = [
 # Dynamic universe: pull today's biggest movers from Alpaca's screener each run.
 USE_DYNAMIC_UNIVERSE = True
 MAX_MOVERS = 15             # max dynamic mover names added per run (on top of core + held)
-MOVER_MIN_PRICE = 5.0       # filter out penny/microcap junk from the movers lists
+MOVER_MIN_PRICE = 5.0       # penny-stock floor; enforced on the real fetched close
+                            # (catches junk the screener gives no price for, e.g. backfill)
 
 # ── Signal parameters (deterministic funnel) ─────────────────────────────────
 RSI_PERIOD = 14
