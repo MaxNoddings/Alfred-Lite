@@ -246,12 +246,12 @@ def _news_candidates(rows: list[dict], portfolio: Portfolio) -> list[dict]:
     held_rows = [r for r in rows if r["ticker"] in held]
     flagged = [r for r in rows if set(r["flags"]) & config.NEWS_CANDIDATE_FLAGS]
     ordered, seen = [], set()
-    for r in held_rows + sorted(flagged, key=lambda x: -abs(x["zscore_20"])):
+    for r in held_rows + sorted(flagged, key=lambda x: -abs(x["zscore_20"] or 0)):
         if r["ticker"] not in seen:
             seen.add(r["ticker"])
             ordered.append(r)
     if not ordered:
-        ordered = sorted(rows, key=lambda x: -abs(x["zscore_20"]))[:3]
+        ordered = sorted(rows, key=lambda x: -abs(x["zscore_20"] or 0))[:3]
     return ordered[: config.MAX_NEWS_CANDIDATES]
 
 

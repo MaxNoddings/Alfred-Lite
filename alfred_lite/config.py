@@ -11,11 +11,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Universe ─────────────────────────────────────────────────────────────────
-# Small, liquid watchlist. Keeps each run fast, cheap, and focused. Easy to grow.
+# A lean, stable CORE anchor (market ETFs + a few megacaps + SPCX/SpaceX). Each run
+# the dynamic universe adds the day's biggest movers on top (see universe.py) plus any
+# names we currently hold, so Alfred trades what's actually moving — not a fixed list.
 WATCHLIST: list[str] = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL",
-    "META", "TSLA", "AMD", "SPY", "QQQ",
+    "SPY", "QQQ", "NVDA", "AAPL", "MSFT", "TSLA", "SPCX",
 ]
+
+# Dynamic universe: pull today's biggest movers from Alpaca's screener each run.
+USE_DYNAMIC_UNIVERSE = True
+MAX_MOVERS = 15             # max dynamic mover names added per run (on top of core + held)
+MOVER_MIN_PRICE = 5.0       # filter out penny/microcap junk from the movers lists
 
 # ── Signal parameters (deterministic funnel) ─────────────────────────────────
 RSI_PERIOD = 14

@@ -8,7 +8,7 @@ import datetime as dt
 import logging
 
 from alfred_lite import broker as bk
-from alfred_lite import brain, config, data, executor, logbook, risk, signals
+from alfred_lite import brain, config, data, executor, logbook, risk, signals, universe
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +77,8 @@ def main(risk_only: bool = False) -> None:
         print(bk.format_portfolio(broker.snapshot()))
         return
 
-    bars = data.fetch_bars(config.WATCHLIST, config.LOOKBACK_DAYS)
+    tickers = universe.build(list(portfolio.positions))
+    bars = data.fetch_bars(tickers, config.LOOKBACK_DAYS)
     rows = signals.compute_signals(bars)
     recent = logbook.recent_trades(config.RECENT_TRADES_FOR_CONTEXT)
 
