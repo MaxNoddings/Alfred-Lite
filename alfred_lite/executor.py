@@ -63,9 +63,10 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
     orders: list[dict] = []
 
     # 1) Risk exits first — flatten to zero, override the brain, ignore the cooldown.
+    #    close_all = qty-based full close (no sliver left behind), not a notional sell.
     for ticker, reason in forced.items():
         pos = portfolio.positions.get(ticker)
-        if not pos or abs(pos.market_value) < config.MIN_ORDER_USD:
+        if not pos or pos.qty == 0:
             continue
         orders.append({
             "ticker": ticker,
@@ -75,6 +76,7 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
             "target_pct": 0.0,
             "confidence": None,
             "reasoning": f"risk exit: {reason}",
+            "close_all": True,
         })
 
     # 2) Conviction-scaled target weights for everything actionable (skip holds/exits).
@@ -86,6 +88,24 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
     for ticker, d in actionable.items():
         cap = _effective_cap(d.get("confidence"))
         targets[ticker] = max(-cap, min(cap, float(d["target_pct"])))
+
+    # 2b) Dust sweep: notional fills round to cents and can leave sub-$1 slivers that
+    #     Alpaca won't accept sell orders for — but they still count as positions.
+    #     Close them outright so they never clog position slots.
+    for ticker, pos in portfolio.positions.items():
+        if ticker in forced or ticker in targets or pos.qty == 0:
+            continue
+        if abs(pos.market_value) < config.MIN_ORDER_USD:
+            orders.append({
+                "ticker": ticker,
+                "side": "sell" if pos.qty > 0 else "buy",
+                "notional": round(abs(pos.market_value), 2),
+                "action": "exit",
+                "target_pct": 0.0,
+                "confidence": None,
+                "reasoning": "dust sweep: sub-$1 sliver freed its position slot",
+                "close_all": True,
+            })
 
     # 3) Gross-exposure guard: keep long+short within MAX_GROSS_EXPOSURE of equity.
     #    Held names the brain left alone (and isn't exiting) stay put and consume budget;
@@ -103,7 +123,16 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
         log.info("gross guard: scaling new targets x%.2f (kept book %.0f%%)", scale, held_kept * 100)
 
     # 4) Turn target weights into guardrailed orders.
-    open_count = len(portfolio.positions)
+    #    Position slots: dust slivers don't count, and anything exiting this run
+    #    (risk exit, dust sweep, or a brain target of ~zero) frees its slot now.
+    exiting = set(forced) | {
+        t for t, w in targets.items()
+        if t in portfolio.positions and abs(w * equity) < config.MIN_ORDER_USD
+    }
+    open_count = sum(
+        1 for t, p in portfolio.positions.items()
+        if abs(p.market_value) >= config.MIN_ORDER_USD and t not in exiting
+    )
     for ticker, target in targets.items():
         d = actionable[ticker]
         desired = target * equity
@@ -113,6 +142,7 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
         if abs(delta) < config.MIN_ORDER_USD:                      # dust floor
             continue
         side = "buy" if delta > 0 else "sell"
+        full_close = pos is not None and abs(desired) < config.MIN_ORDER_USD
 
         if desired < 0 and (not config.ALLOW_SHORTING or not broker.is_shortable(ticker)):
             log.info("skip %s: short not permitted (legal-only shorting)", ticker)
@@ -137,10 +167,12 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
         orders.append({
             "ticker": ticker,
             "side": side,
-            "notional": round(abs(delta), 2),
+            # A flatten closes the WHOLE position by qty (no sliver); otherwise trade the delta.
+            "notional": round(abs(current) if full_close else abs(delta), 2),
             "action": d.get("action"),
             "target_pct": round(target, 4),
             "confidence": d.get("confidence"),
             "reasoning": d.get("reasoning"),
+            "close_all": full_close,
         })
     return orders

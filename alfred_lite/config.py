@@ -36,7 +36,7 @@ LOOKBACK_DAYS = 60          # history pulled per run to compute the above
 # MAX_POSITION_PCT, a marginal one is held to BASE_POSITION_PCT. "Bet bigger when the
 # edge is bigger" — enforced. The gross cap keeps the whole book within equity (no margin).
 MAX_POSITION_PCT = 0.45     # cap a top-conviction position at 45% of equity
-BASE_POSITION_PCT = 0.10    # cap a low-conviction position at 10% of equity
+BASE_POSITION_PCT = 0.20    # cap a low-conviction position at 20% of equity
 MAX_GROSS_EXPOSURE = 1.00   # long + short exposure <= 100% of equity — NO leverage
 MAX_POSITIONS = 5           # max concurrent positions (long or short)
 MIN_ORDER_USD = 1.0         # don't submit dust (Alpaca's fractional floor)

@@ -26,7 +26,10 @@ def _execute(broker, orders: list[dict], market_note: str) -> list[dict]:
             log.warning("no price for %s — skipping order", o["ticker"])
             continue
         try:
-            broker.submit(o["ticker"], o["side"], o["notional"])
+            if o.get("close_all"):                     # qty-based full flatten — no sliver
+                broker.close(o["ticker"])
+            else:
+                broker.submit(o["ticker"], o["side"], o["notional"])
         except Exception as exc:                       # one reject shouldn't kill the run
             log.warning("order failed for %s: %s", o["ticker"], exc)
             continue
@@ -79,6 +82,7 @@ def main(risk_only: bool = False) -> None:
 
     tickers = universe.build(list(portfolio.positions))
     bars = data.fetch_bars(tickers, config.LOOKBACK_DAYS)
+    bars = data.overlay_live_prices(bars)               # real-time truth over yfinance lag
     rows = signals.compute_signals(bars)
     rows = universe.enforce_price_floor(rows, list(portfolio.positions))   # penny-stock guard
     recent = logbook.recent_trades(config.RECENT_TRADES_FOR_CONTEXT)

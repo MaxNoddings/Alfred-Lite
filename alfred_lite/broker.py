@@ -49,6 +49,13 @@ class Broker(Protocol):
         opens/extends a short — gated by `is_shortable` + available buying power.
         """
 
+    def close(self, ticker: str) -> None:
+        """Flatten the ENTIRE position (long or short), fractional dust included.
+
+        Preferred over a notional sell for full exits — notional orders round to
+        cents and can leave sub-$1 slivers that clog position slots forever.
+        """
+
     def is_market_open(self) -> bool:
         """True if the US equity market is currently open."""
 
@@ -154,6 +161,17 @@ class SimBroker:
         self._save()
         log.info("SIM %s %s $%.2f @ %.2f -> qty %.4f", side, ticker, notional, price, new_qty)
 
+    def close(self, ticker: str) -> None:
+        pos = self.positions.get(ticker)
+        if pos is None:
+            return
+        qty = float(pos["qty"])
+        price = self._price(ticker)
+        self.cash += qty * price                          # sell long credits; covering short debits
+        self.positions.pop(ticker, None)
+        self._save()
+        log.info("SIM close %s: %.4f sh @ %.2f", ticker, qty, price)
+
     def is_market_open(self) -> bool:
         return True                                       # sim always "open" for testing
 
@@ -207,6 +225,10 @@ class AlpacaBroker:
         )
         self.client.submit_order(order_data=order)
         log.info("ALPACA %s %s $%.2f", side, ticker, notional)
+
+    def close(self, ticker: str) -> None:
+        self.client.close_position(ticker)                # qty-based: flattens dust too
+        log.info("ALPACA close %s (full position)", ticker)
 
     def is_market_open(self) -> bool:
         return bool(self.client.get_clock().is_open)
