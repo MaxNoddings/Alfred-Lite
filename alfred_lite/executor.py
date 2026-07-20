@@ -85,9 +85,11 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
         if d["ticker"] not in forced and d.get("action") != "hold"
     }
     targets: dict[str, float] = {}
+    raw_targets: dict[str, float] = {}          # the brain's stated target, pre-clamp
     for ticker, d in actionable.items():
         cap = _effective_cap(d.get("confidence"))
-        targets[ticker] = max(-cap, min(cap, float(d["target_pct"])))
+        raw_targets[ticker] = float(d["target_pct"])
+        targets[ticker] = max(-cap, min(cap, raw_targets[ticker]))
 
     # 2b) Dust sweep: notional fills round to cents and can leave sub-$1 slivers that
     #     Alpaca won't accept sell orders for — but they still count as positions.
@@ -133,16 +135,33 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
         1 for t, p in portfolio.positions.items()
         if abs(p.market_value) >= config.MIN_ORDER_USD and t not in exiting
     )
+    deadband = max(config.MIN_ORDER_USD, config.MIN_TRADE_PCT * equity)
     for ticker, target in targets.items():
         d = actionable[ticker]
         desired = target * equity
         pos = portfolio.positions.get(ticker)
         current = pos.market_value if pos else 0.0
         delta = desired - current
-        if abs(delta) < config.MIN_ORDER_USD:                      # dust floor
-            continue
         side = "buy" if delta > 0 else "sell"
         full_close = pos is not None and abs(desired) < config.MIN_ORDER_USD
+
+        # Deadband: a restated target + drifted prices is NOT a trade signal.
+        # Gate on the brain's STATED change (raw target vs current) — not the
+        # post-clamp delta — so the conviction cap can't manufacture a trim the
+        # brain never asked for (e.g. "45%, conf 0.85" restated over a 45%
+        # position must be a no-op, even though the cap clamps it to 41.25%).
+        # Full closes are exempt: exiting is deliberate and must always be
+        # possible, however small the position.
+        stated_delta = raw_targets[ticker] * equity - current
+        if abs(stated_delta) < (config.MIN_ORDER_USD if full_close else deadband):
+            if abs(stated_delta) >= config.MIN_ORDER_USD:
+                log.info(
+                    "deadband: skip %s %s $%.2f stated change (< $%.2f)",
+                    side, ticker, abs(stated_delta), deadband,
+                )
+            continue
+        if abs(delta) < config.MIN_ORDER_USD:                     # post-clamp dust
+            continue
 
         if desired < 0 and (not config.ALLOW_SHORTING or not broker.is_shortable(ticker)):
             log.info("skip %s: short not permitted (legal-only shorting)", ticker)

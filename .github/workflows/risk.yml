@@ -1,12 +1,12 @@
 name: alfred-lite-risk
 
+# NOTE: no `schedule:` here on purpose. GitHub's built-in cron proved unreliable,
+# so this workflow is fired via workflow_dispatch by an EXTERNAL cron service
+# (cron-jobs.org) — every 15 min during market hours. Cadence changes happen THERE,
+# not in this file. The sweep makes no model calls (pure arithmetic on the live
+# snapshot, ~$0), and main.py gates on Alpaca's clock, so off-hours fires no-op.
 on:
-  schedule:
-    # Lightweight stop-loss / trailing-stop sweep every 10 min during market hours.
-    # No brain, no news — pure arithmetic on the live snapshot, so ~$0 in API cost.
-    # main.py gates on Alpaca's clock, so off-hours fires just no-op.
-    - cron: "*/10 13-20 * * 1-5"
-  workflow_dispatch: {}            # manual "Run workflow" button
+  workflow_dispatch: {}            # external cron trigger + manual "Run workflow" button
 
 permissions:
   contents: write                  # to commit state back to the repo

@@ -1,9 +1,11 @@
 # 🤵 Alfred Lite
 
 A lightweight, Claude-powered paper-trading bot. Deterministic signals scan a
-**dynamic universe** of the day's biggest movers; **Claude Opus 4.8** — reading live
+**dynamic universe** of the day's biggest movers; **Claude Sonnet 5** — reading live
 news via web search — makes the final buy / sell / short / hold call. Risk management
-and position sizing are enforced in code, not left to the model. Trades a $100k
+and position sizing are enforced in code, not left to the model. The executor is
+deliberately **low-churn**: hold is the default, and a trade deadband stops the
+bot from micro-rebalancing itself to death. Trades a $100k
 [Alpaca](https://alpaca.markets) paper account.
 
 > Paper trading only. Educational project — not investment advice.
@@ -19,8 +21,10 @@ build universe → fetch prices → compute signals → gather news → ask the 
 
 The **brain is a hybrid**: cheap, reproducible signals narrow the field, then Claude
 makes the judgment call with live context. Two model calls per run keep it cheap —
-**Haiku 4.5** gathers news (the costly web-search step, capped), **Opus 4.8** decides.
-A full run costs roughly **$0.10**.
+**Haiku 4.5** gathers news (the costly web-search step, capped), **Sonnet 5** decides.
+A full run costs roughly **$0.07**. The brain's default answer is **hold**: it only
+speaks when a thesis breaks, a real catalyst appears, or a resize is worth ≥5 points
+of equity — winners are exited by the trailing stop, not by second-guessing.
 
 ## Design
 
@@ -69,17 +73,21 @@ All tunables live in `alfred_lite/config.py`:
 |---|---|---|
 | `WATCHLIST` | SPY, QQQ, NVDA, AAPL, MSFT, TSLA, SPCX | the stable core anchor |
 | `MAX_MOVERS` / `MOVER_MIN_PRICE` | 15 / $5 | dynamic universe size + penny floor |
-| `MAX_POSITION_PCT` / `BASE_POSITION_PCT` | 45% / 10% | conviction-sizing range |
-| `STOP_LOSS_PCT` | 8% | hard stop below entry |
-| `TRAIL_ACTIVATE_PCT` / `TRAIL_GIVEBACK_PCT` | 10% / 5% | trailing take-profit |
-| `MODEL` / `NEWS_MODEL` | Opus 4.8 / Haiku 4.5 | decision vs. news models |
+| `MAX_POSITION_PCT` / `BASE_POSITION_PCT` | 45% / 20% | conviction-sizing range |
+| `MIN_TRADE_PCT` | 2% | trade deadband — skip rebalances smaller than this % of equity (full exits exempt) |
+| `STOP_LOSS_PCT` | 8% | hard stop below avg cost |
+| `TRAIL_ACTIVATE_PCT` / `TRAIL_GIVEBACK_PCT` | 10% / 5% | trailing take-profit, armed from original entry |
+| `MODEL` / `NEWS_MODEL` | Sonnet 5 / Haiku 4.5 | decision vs. news models |
 
 ## Deployment
 
-Two GitHub Actions workflows run during market hours (gated on Alpaca's clock):
+Two GitHub Actions workflows run during market hours (gated on Alpaca's clock).
+GitHub's built-in cron proved unreliable, so both are fired via `workflow_dispatch`
+by an **external cron service (cron-jobs.org)** — cadence changes happen there, not
+in the yml:
 
-- **`trade.yml`** — full run (signals + news + decisions) every 30 minutes.
-- **`risk.yml`** — risk sweep (stops only, no model calls) every 10 minutes.
+- **`trade.yml`** — full run (signals + news + decisions), triggered hourly.
+- **`risk.yml`** — risk sweep (stops only, no model calls), triggered every 15 minutes.
 
 Both commit the trade log back to the repo. Keys are stored as encrypted repo secrets.
 

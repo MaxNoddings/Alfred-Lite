@@ -1,12 +1,11 @@
 name: alfred-lite
 
+# NOTE: no `schedule:` here on purpose. GitHub's built-in cron proved unreliable,
+# so this workflow is fired via workflow_dispatch by an EXTERNAL cron service
+# (cron-jobs.org) — hourly during market hours. Cadence changes happen THERE,
+# not in this file. main.py still gates on Alpaca's clock, so off-hours fires no-op.
 on:
-  schedule:
-    # Every 30 min during ~US market hours (cron is UTC). EDT market 9:30-16:00 ET
-    # = 13:30-20:00 UTC. main.py gates on Alpaca's clock for the exact window, so
-    # the pre-open 13:00 fire just no-ops.
-    - cron: "0,30 13-20 * * 1-5"
-  workflow_dispatch: {}            # manual "Run workflow" button
+  workflow_dispatch: {}            # external cron trigger + manual "Run workflow" button
 
 permissions:
   contents: write                  # to commit trades.csv back to the repo

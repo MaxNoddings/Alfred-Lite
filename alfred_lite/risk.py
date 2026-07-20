@@ -38,24 +38,36 @@ def _save_state(state: dict) -> None:
     pathlib.Path(config.RISK_STATE_JSON).write_text(json.dumps(state, indent=2))
 
 
-def _exit_reason(is_long: bool, entry: float, price: float, peak: float) -> str | None:
-    """Return a stop/trail reason string if this position should be flattened."""
-    if entry <= 0:
+def _exit_reason(
+    is_long: bool, cost_basis: float, trade_entry: float, price: float, peak: float
+) -> str | None:
+    """Return a stop/trail reason string if this position should be flattened.
+
+    Two different anchors, deliberately:
+      cost_basis  — the live average cost. The stop-loss measures from here, so it
+                    protects the capital actually at risk after adds.
+      trade_entry — the price when the trade was FIRST opened (persisted in the
+                    sidecar). The trailing stop arms from here. Using cost basis
+                    for this was a bug: every add to a winner raised the average,
+                    shrank the apparent gain, and kept the trail from ever arming
+                    (2 risk exits in 144 fills).
+    """
+    if cost_basis <= 0 or trade_entry <= 0:
         return None
     if is_long:
-        ret = (price - entry) / entry
+        ret = (price - cost_basis) / cost_basis
         if ret <= -config.STOP_LOSS_PCT:
             return f"stop_loss ({ret:+.1%})"
-        peak_ret = (peak - entry) / entry
+        peak_ret = (peak - trade_entry) / trade_entry
         if peak_ret >= config.TRAIL_ACTIVATE_PCT and price <= peak * (1 - config.TRAIL_GIVEBACK_PCT):
-            return f"trailing_stop (peak {peak_ret:+.1%}, now {ret:+.1%})"
+            return f"trailing_stop (peak {peak_ret:+.1%} from entry, now {ret:+.1%} on cost)"
     else:                                               # short: profit when price falls
-        ret = (entry - price) / entry
+        ret = (cost_basis - price) / cost_basis
         if ret <= -config.STOP_LOSS_PCT:
             return f"stop_loss ({ret:+.1%})"
-        peak_ret = (entry - peak) / entry
+        peak_ret = (trade_entry - peak) / trade_entry
         if peak_ret >= config.TRAIL_ACTIVATE_PCT and price >= peak * (1 + config.TRAIL_GIVEBACK_PCT):
-            return f"trailing_stop (peak {peak_ret:+.1%}, now {ret:+.1%})"
+            return f"trailing_stop (peak {peak_ret:+.1%} from entry, now {ret:+.1%} on cost)"
     return None
 
 
@@ -84,7 +96,7 @@ def evaluate(portfolio) -> tuple[list[dict], dict]:
         st["peak"] = max(st["peak"], price) if is_long else min(st["peak"], price)
         state[ticker] = st
 
-        reason = _exit_reason(is_long, entry, price, st["peak"])
+        reason = _exit_reason(is_long, entry, st["entry"], price, st["peak"])
         if reason:
             forced.append({"ticker": ticker, "reason": reason})
             log.info("risk exit %s: %s", ticker, reason)

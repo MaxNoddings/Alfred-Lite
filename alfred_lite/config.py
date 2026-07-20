@@ -40,6 +40,10 @@ BASE_POSITION_PCT = 0.20    # cap a low-conviction position at 20% of equity
 MAX_GROSS_EXPOSURE = 1.00   # long + short exposure <= 100% of equity — NO leverage
 MAX_POSITIONS = 5           # max concurrent positions (long or short)
 MIN_ORDER_USD = 1.0         # don't submit dust (Alpaca's fractional floor)
+MIN_TRADE_PCT = 0.02        # deadband: skip rebalances smaller than this % of equity.
+                            # Kills the micro-rebalance treadmill (a target restated
+                            # every run + drifting prices = endless tiny buys/sells).
+                            # Full exits and risk exits bypass this — closing is always allowed.
 COOLDOWN_MINUTES = 45       # soft anti-churn: don't fully reverse within this window
 ALLOW_SHORTING = True       # shorting allowed — but only when legally permitted
                             # (enough buying power AND the asset is shortable)
@@ -52,8 +56,9 @@ TRAIL_ACTIVATE_PCT = 0.10   # profit needed to arm the trailing take-profit
 TRAIL_GIVEBACK_PCT = 0.05   # once armed, exit on this much pullback from the peak
 
 # ── The brain ────────────────────────────────────────────────────────────────
-MODEL = "claude-opus-4-8"        # decision model — premium judgment where it counts
-NEWS_MODEL = "claude-haiku-4-5"  # news/search model — cheap; Opus stays on the decision
+MODEL = "claude-sonnet-5"        # decision model — near-Opus judgment at ~40% of the cost
+                                 # (intro $2/$10 per Mtok through 2026-08-31)
+NEWS_MODEL = "claude-haiku-4-5"  # news/search model — cheap; decisions stay on MODEL
 RECENT_TRADES_FOR_CONTEXT = 10   # past trades fed to Claude as memory each run
 
 # Candidate filtering: only research news for held positions + tickers carrying one of
@@ -96,6 +101,7 @@ def summary() -> str:
         f"watchlist     : {', '.join(WATCHLIST)}",
         f"position size : {BASE_POSITION_PCT:.0%}-{MAX_POSITION_PCT:.0%} by conviction",
         f"max positions : {MAX_POSITIONS}  ·  gross <= {MAX_GROSS_EXPOSURE:.0%} (no margin)",
+        f"trade deadband: {MIN_TRADE_PCT:.0%} of equity (full exits exempt)",
         f"shorting      : {'on (legal only)' if ALLOW_SHORTING else 'off'}",
         f"cooldown      : {COOLDOWN_MINUTES} min",
         f"stop / trail  : -{STOP_LOSS_PCT:.0%} stop | arm +{TRAIL_ACTIVATE_PCT:.0%}, "
