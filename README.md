@@ -15,8 +15,8 @@ bot from micro-rebalancing itself to death. Trades a $100k
 A stateless run (`main.py`), woken on a schedule by GitHub Actions:
 
 ```
-build universe → fetch prices → compute signals → gather news → ask the brain
-              → risk overlay + guardrails → place orders → log
+build universe → fetch prices → compute signals → read the regime → gather news
+              → ask the brain → risk overlay + guardrails → place orders → log
 ```
 
 The **brain is a hybrid**: cheap, reproducible signals narrow the field, then Claude
@@ -32,12 +32,38 @@ of equity — winners are exited by the trailing stop, not by second-guessing.
 |---|---|
 | `universe.py` | Dynamic universe: lean core + the day's top movers (Alpaca screener) + held names, penny-stock filtered |
 | `data.py` | Daily OHLCV bars (yfinance) |
-| `signals.py` | RSI, mean-reversion z-score, momentum, volume — fast, free, backtestable |
+| `signals.py` | RSI, z-score, momentum, volume + the **market-regime read** — fast, free, backtestable |
 | `brain.py` | Signals + memory + live news → a structured JSON decision per ticker |
 | `risk.py` | Deterministic exits that **override** the brain (stop-loss + trailing take-profit) |
 | `executor.py` | Conviction-scaled sizing + gross-exposure guard + guardrails → orders |
 | `broker.py` | `SimBroker` (offline dev) / `AlpacaBroker` (live) behind one interface |
 | `logbook.py` | Append-only trade log + the brain's recent-trade memory |
+
+## Market regime (deterministic — no model calls)
+
+Alfred's worst blind spot was not knowing *what market it was in*: it ranked names on
+RSI and momentum and bought the strongest, which in a directionless tape means buying
+whatever just popped — precisely what mean-reverts. Every run now opens with a regime
+read computed from the benchmark's trend (50-/200-day SMA), its 20-day realized
+volatility, and universe breadth:
+
+| Regime | Read | Gross cap |
+|---|---|---|
+| **bull** | above both SMAs, breadth confirming | 100% |
+| **chop** | mixed — the whipsaw tape | 60% |
+| **bear** | below both SMAs | 50% |
+| *high vol* | 20-day realized vol ≥ 25% (any regime) | ×0.75 |
+
+The label is passed to the brain as context **and** enforced as a gross-exposure
+ceiling in the executor — guidance the model can reason about but cannot overrule. The
+cap scales only *new* targets, so a tight regime throttles fresh risk without ever
+force-selling the existing book. Missing history degrades to `unknown` (no throttle):
+an absent benchmark must never silently flatten the account.
+
+To profit from a falling tape, the watchlist carries **SH** and **PSQ** — the *-1x*
+inverse S&P and Nasdaq ETFs. Loss is bounded, there is no borrow or recall risk, and
+they route through the normal long-sizing path. The leveraged (-2x/-3x) versions are
+deliberately excluded: they reset daily and decay when held.
 
 ## Risk & sizing (enforced in code)
 
@@ -71,7 +97,10 @@ All tunables live in `alfred_lite/config.py`:
 
 | Knob | Default | What it does |
 |---|---|---|
-| `WATCHLIST` | SPY, QQQ, NVDA, AAPL, MSFT, TSLA, SPCX | the stable core anchor |
+| `WATCHLIST` | SPY, QQQ, NVDA, AAPL, MSFT, TSLA, SPCX, SH, PSQ | the stable core anchor |
+| `INVERSE_ETFS` | SH, PSQ | -1x index ETFs — downside without shorting |
+| `REGIME_GROSS_CAP` | bull 100% / chop 60% / bear 50% | gross-exposure ceiling per regime |
+| `HIGH_VOL_ANNUALIZED` / `HIGH_VOL_GROSS_MULT` | 25% / ×0.75 | violent tape → shrink the book |
 | `MAX_MOVERS` / `MOVER_MIN_PRICE` | 15 / $5 | dynamic universe size + penny floor |
 | `MAX_POSITION_PCT` / `BASE_POSITION_PCT` | 45% / 20% | conviction-sizing range |
 | `MIN_TRADE_PCT` | 2% | trade deadband — skip rebalances smaller than this % of equity (full exits exempt) |

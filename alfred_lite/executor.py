@@ -46,7 +46,10 @@ def _effective_cap(confidence) -> float:
     return base + c * (ceiling - base)
 
 
-def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_exits=None) -> list[dict]:
+def plan_orders(
+    decisions, portfolio, recent_trades, broker, now=None, forced_exits=None,
+    gross_cap=None,
+) -> list[dict]:
     """Apply guardrails to the brain's decisions and return executable orders.
 
     `forced_exits` (from the risk overlay) is a list of {ticker, reason}. Those
@@ -54,7 +57,9 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
     ticker and bypassing the anti-churn cooldown (risk is non-negotiable).
 
     Sizing is conviction-scaled (see `_effective_cap`), then the whole book is held
-    within MAX_GROSS_EXPOSURE of equity (no margin) by scaling the brain's targets.
+    within `gross_cap` of equity (no margin) by scaling the brain's targets.
+    `gross_cap` defaults to MAX_GROSS_EXPOSURE; the regime read passes a tighter
+    ceiling in a chop or bear tape.
     """
     now = now or dt.datetime.now(dt.timezone.utc)
     recent = _recent_by_ticker(recent_trades)
@@ -109,20 +114,41 @@ def plan_orders(decisions, portfolio, recent_trades, broker, now=None, forced_ex
                 "close_all": True,
             })
 
-    # 3) Gross-exposure guard: keep long+short within MAX_GROSS_EXPOSURE of equity.
+    # 3) Gross-exposure guard: keep long+short within the run's gross cap (regime-aware).
     #    Held names the brain left alone (and isn't exiting) stay put and consume budget;
     #    scale the brain's NEW targets to fit whatever remains. Never levers past equity.
+    cap = config.MAX_GROSS_EXPOSURE if gross_cap is None else float(gross_cap)
     held_kept = (
         sum(abs(p.market_value) for t, p in portfolio.positions.items()
             if t not in targets and t not in forced) / equity
         if equity > 0 else 0.0
     )
     brain_gross = sum(abs(w) for w in targets.values())
-    available = config.MAX_GROSS_EXPOSURE - held_kept
+    available = cap - held_kept
     if brain_gross > available and brain_gross > 0:
         scale = max(0.0, available) / brain_gross
-        targets = {t: w * scale for t, w in targets.items()}
-        log.info("gross guard: scaling new targets x%.2f (kept book %.0f%%)", scale, held_kept * 100)
+        # Scaling must never manufacture a SALE. With a tight regime cap `scale` can
+        # reach 0, which would drive every target to zero — and a zero target on a held
+        # name reads downstream as a full close, liquidating positions the brain only
+        # wanted to add to. So for a held name the brain is not reducing, floor the
+        # scaled target at the weight already on the books: "can't afford to add"
+        # degrades to HOLD, never to SELL. Genuine exits (raw target ~0) are untouched.
+        scaled: dict[str, float] = {}
+        for t, w in targets.items():
+            new_w = w * scale
+            pos = portfolio.positions.get(t)
+            raw = raw_targets[t]
+            if pos is not None and equity > 0 and abs(raw) >= config.MIN_TRADE_PCT:
+                held_w = pos.market_value / equity
+                # only when the brain is pointing the same way as the existing position
+                if held_w * raw > 0 and abs(new_w) < abs(held_w):
+                    new_w = held_w
+            scaled[t] = new_w
+        targets = scaled
+        log.info(
+            "gross guard: cap %.0f%%, scaling new targets x%.2f (kept book %.0f%%)",
+            cap * 100, scale, held_kept * 100,
+        )
 
     # 4) Turn target weights into guardrailed orders.
     #    Position slots: dust slivers don't count, and anything exiting this run

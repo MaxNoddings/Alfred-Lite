@@ -16,7 +16,14 @@ load_dotenv()
 # names we currently hold, so Alfred trades what's actually moving — not a fixed list.
 WATCHLIST: list[str] = [
     "SPY", "QQQ", "NVDA", "AAPL", "MSFT", "TSLA", "SPCX",
+    "SH", "PSQ",            # -1x inverse S&P / Nasdaq — see INVERSE_ETFS below
 ]
+
+# Inverse index ETFs: how Alfred profits from a falling tape WITHOUT shorting.
+# Deliberately the -1x pair (not -2x/-3x): those reset daily and decay when held
+# more than a day. Loss is bounded (an ETF can't go below zero), there is no borrow
+# or recall risk, and they flow through the normal long-sizing path — no new logic.
+INVERSE_ETFS: tuple[str, ...] = ("SH", "PSQ")
 
 # Dynamic universe: pull today's biggest movers from Alpaca's screener each run.
 USE_DYNAMIC_UNIVERSE = True
@@ -29,7 +36,33 @@ RSI_PERIOD = 14
 ZSCORE_WINDOW = 20          # lookback for the mean-reversion z-score
 SMA_FAST = 5                # momentum: fast vs slow simple moving average
 SMA_SLOW = 20
-LOOKBACK_DAYS = 60          # history pulled per run to compute the above
+LOOKBACK_DAYS = 260         # history pulled per run — 260 trading days so the regime
+                            # read below can compute a real 200-day SMA on the benchmark
+
+# ── Market regime (deterministic, once per run — no model calls, no cost) ─────
+# Alfred's biggest blind spot was not knowing WHAT MARKET IT WAS IN: it ranked names
+# on RSI/momentum and bought the strongest, which in a chop tape means buying whatever
+# just popped — precisely what mean-reverts. This classifies the tape from the
+# benchmark's trend, its realized volatility, and universe breadth. The label is fed
+# to the brain as context AND caps gross exposure in the executor, so it is guidance
+# the model can reason about but cannot overrule.
+REGIME_BENCHMARK = "SPY"
+REGIME_SMA_FAST = 50        # price vs this = intermediate trend
+REGIME_SMA_SLOW = 200       # price vs this = primary trend
+REGIME_VOL_WINDOW = 20      # lookback for realized volatility
+REGIME_BREADTH_MIN = 0.45   # fraction of the universe trending up required for "bull"
+HIGH_VOL_ANNUALIZED = 0.25  # 20d realized vol at/above this = a high-volatility tape
+HIGH_VOL_GROSS_MULT = 0.75  # ...which shrinks the regime's gross cap by this factor
+
+# Gross-exposure ceiling per regime. Chop and bear deliberately throttle the book:
+# the guard scales only NEW targets, so a tight cap stops Alfred ADDING risk into a
+# bad tape — it never force-sells what it already holds.
+REGIME_GROSS_CAP = {
+    "bull": 1.00,           # trend up, decent breadth — full freedom
+    "chop": 0.60,           # directionless: whipsaw risk, size down
+    "bear": 0.50,           # primary downtrend: defend, favour cash/inverse
+    "unknown": 1.00,        # not enough history — don't punish missing data
+}
 
 # ── Guardrails (risk management, applied AFTER the brain) ─────────────────────
 # Position size scales with the brain's confidence: a max-conviction idea may reach
@@ -102,6 +135,10 @@ def summary() -> str:
         f"position size : {BASE_POSITION_PCT:.0%}-{MAX_POSITION_PCT:.0%} by conviction",
         f"max positions : {MAX_POSITIONS}  ·  gross <= {MAX_GROSS_EXPOSURE:.0%} (no margin)",
         f"trade deadband: {MIN_TRADE_PCT:.0%} of equity (full exits exempt)",
+        "regime caps   : " + "  ".join(
+            f"{k}={v:.0%}" for k, v in REGIME_GROSS_CAP.items() if k != "unknown"
+        ) + f"  ·  high-vol x{HIGH_VOL_GROSS_MULT:.2f}",
+        f"inverse ETFs  : {', '.join(INVERSE_ETFS)} (-1x, bounded loss, no borrow)",
         f"shorting      : {'on (legal only)' if ALLOW_SHORTING else 'off'}",
         f"cooldown      : {COOLDOWN_MINUTES} min",
         f"stop / trail  : -{STOP_LOSS_PCT:.0%} stop | arm +{TRAIL_ACTIVATE_PCT:.0%}, "

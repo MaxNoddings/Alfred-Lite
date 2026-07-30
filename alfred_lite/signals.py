@@ -109,6 +109,112 @@ def compute_signals(bars: dict) -> list[dict]:
     return rows
 
 
+def _unknown_regime(why: str) -> dict:
+    return {
+        "label": "unknown",
+        "high_vol": False,
+        "gross_cap": min(config.REGIME_GROSS_CAP["unknown"], config.MAX_GROSS_EXPOSURE),
+        "price": None,
+        "sma_fast": None,
+        "sma_slow": None,
+        "realized_vol": None,
+        "breadth": None,
+        "note": f"regime unknown ({why}) — trading without a regime view",
+    }
+
+
+def market_regime(bars: dict, rows: list[dict] | None = None) -> dict:
+    """Classify the overall tape: bull / chop / bear, plus a high-volatility flag.
+
+    Pure arithmetic on the benchmark's daily bars — no model call, no cost, runs every
+    trading run. Three inputs:
+
+      trend    — benchmark close vs its 50- and 200-day SMA (intermediate + primary)
+      vol      — 20-day realized volatility, annualized (is the tape violent?)
+      breadth  — share of the universe with positive momentum (is the move broad?)
+
+    Returns the label plus `gross_cap`, the ceiling the executor applies to total
+    exposure. Degrades to "unknown" (no throttle) whenever history is too short —
+    a missing benchmark must never silently flatten the book.
+    """
+    df = bars.get(config.REGIME_BENCHMARK)
+    if df is None or df.empty:
+        return _unknown_regime(f"no {config.REGIME_BENCHMARK} bars")
+    close = df["Close"].astype(float)
+    if len(close) < config.REGIME_SMA_FAST + 1:
+        return _unknown_regime(f"only {len(close)} bars of {config.REGIME_BENCHMARK}")
+
+    price = float(close.iloc[-1])
+    sma_fast = _num(close.rolling(config.REGIME_SMA_FAST).mean().iloc[-1])
+    sma_slow = (
+        _num(close.rolling(config.REGIME_SMA_SLOW).mean().iloc[-1])
+        if len(close) >= config.REGIME_SMA_SLOW
+        else None
+    )
+    if sma_fast is None:
+        return _unknown_regime("benchmark SMA unavailable")
+
+    rets = close.pct_change().dropna()
+    realized_vol = (
+        _num(float(rets.tail(config.REGIME_VOL_WINDOW).std()) * np.sqrt(252))
+        if len(rets) >= config.REGIME_VOL_WINDOW
+        else None
+    )
+
+    # Breadth over the names we actually looked at this run (benchmark excluded —
+    # it is the thing being measured, not a vote).
+    trending = [
+        r for r in (rows or [])
+        if r.get("momentum_pct") is not None and r["ticker"] != config.REGIME_BENCHMARK
+    ]
+    breadth = (
+        sum(1 for r in trending if r["momentum_pct"] > 0) / len(trending)
+        if trending else None
+    )
+
+    above_fast = price > sma_fast
+    # With <200 bars the primary trend is unknowable; fall back to the intermediate one
+    # rather than inventing a bearish reading from missing data.
+    above_slow = price > sma_slow if sma_slow is not None else above_fast
+    broad_enough = breadth is None or breadth >= config.REGIME_BREADTH_MIN
+
+    if above_fast and above_slow and broad_enough:
+        label = "bull"
+    elif not above_fast and not above_slow:
+        label = "bear"
+    else:
+        label = "chop"
+
+    high_vol = realized_vol is not None and realized_vol >= config.HIGH_VOL_ANNUALIZED
+    gross_cap = config.REGIME_GROSS_CAP.get(label, config.MAX_GROSS_EXPOSURE)
+    if high_vol:
+        gross_cap *= config.HIGH_VOL_GROSS_MULT
+    gross_cap = min(gross_cap, config.MAX_GROSS_EXPOSURE)
+
+    bits = [
+        f"{config.REGIME_BENCHMARK} {price:.2f}",
+        f"{'above' if above_fast else 'below'} 50d ({sma_fast:.2f})",
+        f"{'above' if above_slow else 'below'} 200d ({sma_slow:.2f})" if sma_slow
+        else "200d n/a",
+    ]
+    if realized_vol is not None:
+        bits.append(f"20d vol {realized_vol:.0%}{' — HIGH' if high_vol else ''}")
+    if breadth is not None:
+        bits.append(f"breadth {breadth:.0%} trending up")
+
+    return {
+        "label": label,
+        "high_vol": high_vol,
+        "gross_cap": round(gross_cap, 4),
+        "price": round(price, 2),
+        "sma_fast": round(sma_fast, 2),
+        "sma_slow": round(sma_slow, 2) if sma_slow is not None else None,
+        "realized_vol": round(realized_vol, 4) if realized_vol is not None else None,
+        "breadth": round(breadth, 3) if breadth is not None else None,
+        "note": f"{label.upper()}{' / HIGH VOL' if high_vol else ''}: " + "; ".join(bits),
+    }
+
+
 def format_table(rows: list[dict]) -> str:
     """Pretty, aligned table of signal rows for previews and debug logs."""
     if not rows:

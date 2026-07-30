@@ -100,6 +100,8 @@ for being "overbought", restating targets every run, and round-tripping position
 must clear a high bar.
 
 Each run you receive:
+- A MARKET REGIME read (bull / chop / bear, plus a high-volatility flag) computed \
+deterministically from the benchmark's trend, realized volatility and breadth.
 - A SIGNALS table (RSI-14, 20-day z-score, 5/20 momentum %, volume ratio, daily \
 return %, and flags) for a watchlist.
 - Your PORTFOLIO (cash, equity, open positions with unrealized P&L).
@@ -122,6 +124,29 @@ Decision fields:
 15% long, -0.10 = 10% short, 0 = flat/exit. (Ignored for "hold".)
 - confidence: 0.0-1.0.
 - reasoning: ONE tight sentence. It is logged and becomes your memory — make it count.
+
+TRADE THE REGIME. The regime read is not decoration — it changes what a good trade \
+looks like, and its gross-exposure ceiling is enforced downstream whether you respect \
+it or not:
+- BULL: trend-following works. Buy strength, let leaders run, carry full exposure.
+- CHOP: the dangerous one. Momentum whipsaws — buying whatever just popped is exactly \
+what mean-reverts. Demand a real catalyst, not just a strong RSI; prefer fewer and \
+smaller positions; holding cash is a legitimate, often winning, choice here.
+- BEAR: defend. Do not fund new longs by hoping. Raise cash, and express downside via \
+the inverse ETFs below rather than reaching for falling knives.
+- HIGH VOL (any regime): cut size. The same thesis at half the position is the right \
+response to a violent tape.
+
+GOING SHORT — two ways, and prefer the first:
+1. INVERSE ETFs (SH = -1x S&P 500, PSQ = -1x Nasdaq-100). These are your default way \
+to profit from a falling market. You buy them like any long, loss is bounded, and \
+there is no borrow risk. Appropriate when your view is on the MARKET, not one company. \
+Hold them for days at most — they are index hedges, not investments.
+2. SINGLE-NAME SHORTS (negative target_pct). Reserve these for a specific, \
+identifiable broken story in one company — an earnings miss, a guidance cut, fraud, a \
+failed catalyst. A stock being merely "extended" or "overbought" is NOT a short thesis; \
+that is the same mistake as trimming a winner, with unlimited downside attached. Never \
+short a strong stock just because the tape is weak — use PSQ/SH for that.
 
 Rules of the road (hard limits are also enforced downstream):
 - LET WINNERS RUN. A deterministic trailing stop already protects gains — that exit \
@@ -229,8 +254,17 @@ def _format_recent_trades(recent_trades: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _make_decision(client, rows, portfolio, recent_trades, news) -> tuple[dict, dict]:
+def _make_decision(client, rows, portfolio, recent_trades, news, regime=None) -> tuple[dict, dict]:
+    regime_block = ""
+    if regime:
+        regime_block = (
+            "=== MARKET REGIME ===\n"
+            f"{regime['note']}\n"
+            f"gross exposure ceiling this run: {regime['gross_cap']:.0%} of equity "
+            "(enforced downstream)\n\n"
+        )
     user = (
+        f"{regime_block}"
         "=== SIGNALS ===\n"
         f"{signals_mod.format_table(rows)}\n\n"
         "=== PORTFOLIO ===\n"
@@ -274,7 +308,8 @@ def _news_candidates(rows: list[dict], portfolio: Portfolio) -> list[dict]:
 
 
 def decide(
-    signals: list[dict], portfolio: Portfolio, recent_trades: list[dict]
+    signals: list[dict], portfolio: Portfolio, recent_trades: list[dict],
+    regime: dict | None = None,
 ) -> dict:
     """Run the two-step brain and return the decision dict (see module docstring)."""
     if not signals:
@@ -293,7 +328,9 @@ def decide(
     )
     news, news_usage = _gather_news(client, candidates)
     log.info("brain: making decision (model %s)", config.MODEL)
-    result, dec_usage = _make_decision(client, signals, portfolio, recent_trades, news)
+    result, dec_usage = _make_decision(
+        client, signals, portfolio, recent_trades, news, regime
+    )
 
     result["_news"] = news
     result["_usage"] = {"news": news_usage, "decision": dec_usage}

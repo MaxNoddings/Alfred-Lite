@@ -87,12 +87,18 @@ def main(risk_only: bool = False) -> None:
     rows = universe.enforce_price_floor(rows, list(portfolio.positions))   # penny-stock guard
     recent = logbook.recent_trades(config.RECENT_TRADES_FOR_CONTEXT)
 
-    result = brain.decide(rows, portfolio, recent)
-    print(f"\nmarket note: {result.get('market_note', '')}")
+    # Deterministic regime read (free): frames the brain AND caps gross exposure.
+    regime = signals.market_regime(bars, rows)
+    print(f"\nregime     : {regime['note']}")
+    print(f"gross cap  : {regime['gross_cap']:.0%} of equity")
+
+    result = brain.decide(rows, portfolio, recent, regime)
+    print(f"market note: {result.get('market_note', '')}")
     print(f"brain cost : ${result.get('_cost_usd', 0):.4f}")
 
     orders = executor.plan_orders(
-        result["decisions"], portfolio, recent, broker, forced_exits=forced_exits
+        result["decisions"], portfolio, recent, broker,
+        forced_exits=forced_exits, gross_cap=regime["gross_cap"],
     )
     executed = _execute(broker, orders, result.get("market_note", ""))
     if executed:

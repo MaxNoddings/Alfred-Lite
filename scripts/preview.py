@@ -17,6 +17,9 @@ def main() -> None:
     bars = data.fetch_bars(config.WATCHLIST, config.LOOKBACK_DAYS)
     rows = signals.compute_signals(bars)
     print(f"got bars for {len(bars)} / {len(config.WATCHLIST)} tickers\n")
+    regime = signals.market_regime(bars, rows)
+    print(f"regime   : {regime['note']}")
+    print(f"gross cap: {regime['gross_cap']:.0%} of equity\n")
     print(signals.format_table(rows))
 
 
