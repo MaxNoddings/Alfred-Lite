@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+from itertools import zip_longest
 
 from . import config, signals as signals_mod
 from .broker import Portfolio, format_portfolio
@@ -296,9 +297,20 @@ def _news_candidates(rows: list[dict], portfolio: Portfolio) -> list[dict]:
     """
     held = set(portfolio.positions)
     held_rows = [r for r in rows if r["ticker"] in held]
+    # Scan picks keep their ranking order, but leaders and laggards are INTERLEAVED.
+    # Taking them in universe order would spend every slot on leaders and leave the
+    # short side with no news at all — and a laggard without a story is one the brain
+    # cannot short, since shorting requires an identifiable broken thesis. Held names
+    # still come first: knowing an open position's thesis just broke outranks vetting
+    # any new idea.
+    def _picks(flag: str) -> list[dict]:
+        return [r for r in rows if r["ticker"] not in held and flag in r["flags"]]
+
+    leaders, laggards = _picks("leader"), _picks("laggard")
+    scan_rows = [r for pair in zip_longest(leaders, laggards) for r in pair if r]
     flagged = [r for r in rows if set(r["flags"]) & config.NEWS_CANDIDATE_FLAGS]
     ordered, seen = [], set()
-    for r in held_rows + sorted(flagged, key=lambda x: -abs(x["zscore_20"] or 0)):
+    for r in held_rows + scan_rows + sorted(flagged, key=lambda x: -abs(x["zscore_20"] or 0)):
         if r["ticker"] not in seen:
             seen.add(r["ticker"])
             ordered.append(r)

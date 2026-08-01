@@ -132,7 +132,7 @@ def _trend_label(price, sma_fast, sma_slow) -> str:
     intermediate one rather than inventing a bearish reading from missing data.
     """
     above_fast = price > sma_fast
-    above_slow = price > sma_slow if sma_slow is not None and sma_slow == sma_slow else above_fast
+    above_slow = price > sma_slow if sma_slow is not None else above_fast   # _num() -> None on NaN
     if above_fast and above_slow:
         return "bull"
     if not above_fast and not above_slow:

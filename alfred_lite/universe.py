@@ -1,12 +1,15 @@
-"""Dynamic trading universe: a stable core + the day's biggest movers + held names.
+"""Assembles the run's trading universe: a stable core + fresh candidates + held names.
 
-The fixed CORE (config.WATCHLIST) anchors Alfred — market ETFs, a few megacaps, SPCX.
-Alpaca's screener adds today's biggest gainers/losers (most-actives as backfill) so
-Alfred acts on what is actually moving, not a static list. Held positions are always
-included so we never lose sight of something we own.
+Three layers, in order:
 
-Degrades safely: if the screener is unavailable (sim mode, no keys, network, or the
-data plan lacks it) it falls back to core + held — a run never dies here.
+  CORE      config.WATCHLIST — market ETFs, a few megacaps, SPCX, the inverse pair.
+  CANDIDATES the full-market scan (scan.py) ranks every tradable name by relative
+            strength and returns leaders + laggards. If the scan is disabled or fails,
+            Alpaca's top-mover screener stands in as a fallback.
+  HELD      always included, so we never lose sight of something we own.
+
+Degrades safely at every step: a failed scan falls back to the screener, a failed
+screener falls back to core + held. A run never dies here.
 """
 from __future__ import annotations
 
@@ -104,6 +107,8 @@ def build(held_tickers: list[str] | None = None) -> tuple[list[str], dict]:
     scan_result: dict = {}
     # The scan needs Alpaca DATA keys, not the Alpaca broker — so it also runs under
     # BROKER=sim, which is how a full run is rehearsed against the real market safely.
+    # The screener fallback below stays live-only: it is the degraded path, and there is
+    # no reason to reach for it in a sim rehearsal when the scan is the real behaviour.
     has_keys = bool(config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY)
     live = config.BROKER == "alpaca" and config.ALPACA_API_KEY
     if config.USE_FULL_MARKET_SCAN and has_keys:

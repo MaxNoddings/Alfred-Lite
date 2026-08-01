@@ -53,15 +53,18 @@ def main() -> None:
         }
     ]
 
-    rows = signals.compute_signals(data.fetch_bars(config.WATCHLIST, config.LOOKBACK_DAYS))
+    bars = data.fetch_bars(config.WATCHLIST, config.LOOKBACK_DAYS)
+    rows = signals.compute_signals(bars)
+    regime = signals.market_regime(bars, rows)      # the brain sees this in production
 
     print("=== PORTFOLIO (seeded) ===")
     print(bk.format_portfolio(portfolio))
     print("\n=== SIGNALS ===")
     print(signals.format_table(rows))
+    print(f"\n=== REGIME ===\n{regime['note']}\ngross cap: {regime['gross_cap']:.0%}")
     print()
 
-    result = brain.decide(rows, portfolio, recent)
+    result = brain.decide(rows, portfolio, recent, regime)
 
     print("\n=== NEWS (web_search) ===")
     print(result.get("_news", "") or "(none)")

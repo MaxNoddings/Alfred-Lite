@@ -45,7 +45,9 @@ SCAN_FEED = "sip"           # consolidated tape. IEX sees ~3% of volume, which w
 SCAN_ADJUSTMENT = "all"     # split + dividend adjusted. NEVER "raw" (Alpaca's default):
                             # a reverse split then reads as a huge rally and reverse-
                             # split ETPs take over the whole leaderboard.
-SCAN_MIN_PRICE = 5.0        # penny-stock floor
+SCAN_MIN_PRICE = MOVER_MIN_PRICE   # ONE penny floor for the whole system. Kept as an
+                            # alias rather than a second literal so the scan and the
+                            # post-fetch `enforce_price_floor` guard can never disagree.
 SCAN_MIN_DOLLAR_VOLUME = 20_000_000   # median $/day — the junk filter that does the work
 SCAN_RS_FAST = 20           # relative-strength windows (trading days)
 SCAN_RS_SLOW = 60
@@ -129,8 +131,18 @@ RECENT_TRADES_FOR_CONTEXT = 10   # past trades fed to Claude as memory each run
 
 # Candidate filtering: only research news for held positions + tickers carrying one of
 # these "notable" flags, capped — cuts news cost and sharpens coverage. (Tune freely.)
-NEWS_CANDIDATE_FLAGS = {"oversold", "overbought", "stretched_low", "stretched_high"}
-MAX_NEWS_CANDIDATES = 6
+# "leader"/"laggard" MUST be here. The brain may only OPEN a position on a concrete
+# catalyst, and catalysts come from news — so a scan-surfaced idea with no news is one
+# it is structurally unable to act on. Before these were included, 16 of 20 scan
+# names reached the brain with no news, quietly wasting most of the scan's value.
+NEWS_CANDIDATE_FLAGS = {
+    "oversold", "overbought", "stretched_low", "stretched_high", "leader", "laggard",
+}
+MAX_NEWS_CANDIDATES = 12    # web_search is capped at 6 uses per run regardless, so a
+                            # wider candidate list costs little beyond a few tokens.
+                            # Not the full 20-name shortlist: coverage trades against
+                            # depth per name, and the ranking means the tail matters
+                            # least. Held + the top leaders and laggards get researched.
 
 # ── Accounts / runtime ───────────────────────────────────────────────────────
 BROKER = os.getenv("BROKER", "sim").lower()         # "sim" | "alpaca"
@@ -166,7 +178,11 @@ def summary() -> str:
         f"model         : {MODEL}",
         f"watchlist     : {', '.join(WATCHLIST)}",
         f"position size : {BASE_POSITION_PCT:.0%}-{MAX_POSITION_PCT:.0%} by conviction",
-        f"max positions : {MAX_POSITIONS}  ·  gross <= {MAX_GROSS_EXPOSURE:.0%} (no margin)",
+        f"max positions : {MAX_POSITIONS}  ·  gross <= {MAX_GROSS_EXPOSURE:.0%} hard ceiling "
+        "(no margin; the regime cap below usually binds tighter)",
+        f"universe      : {'full-market scan' if USE_FULL_MARKET_SCAN else 'screener movers'}"
+        + (f"  ·  {SCAN_TOP_LONGS} leaders + {SCAN_TOP_SHORTS} laggards, "
+           f">=${SCAN_MIN_DOLLAR_VOLUME/1e6:.0f}M/day" if USE_FULL_MARKET_SCAN else ""),
         f"trade deadband: {MIN_TRADE_PCT:.0%} of equity (full exits exempt)",
         "regime caps   : " + "  ".join(
             f"{k}={v:.0%}" for k, v in REGIME_GROSS_CAP.items() if k != "unknown"
