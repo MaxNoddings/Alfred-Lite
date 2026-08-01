@@ -80,15 +80,28 @@ def main(risk_only: bool = False) -> None:
         print(bk.format_portfolio(broker.snapshot()))
         return
 
-    tickers = universe.build(list(portfolio.positions))
+    tickers, scan_result = universe.build(list(portfolio.positions))
     bars = data.fetch_bars(tickers, config.LOOKBACK_DAYS)
     bars = data.overlay_live_prices(bars)               # real-time truth over yfinance lag
     rows = signals.compute_signals(bars)
     rows = universe.enforce_price_floor(rows, list(portfolio.positions))   # penny-stock guard
+
+    # Tag how each name reached the shortlist so the brain reads the ranking, not just
+    # the technicals: a "laggard" flag is a very different context from an oversold RSI.
+    if scan_result:
+        leaders, laggards = set(scan_result["leaders"]), set(scan_result["laggards"])
+        for r in rows:
+            if r["ticker"] in leaders:
+                r["flags"].append("leader")
+            elif r["ticker"] in laggards:
+                r["flags"].append("laggard")
     recent = logbook.recent_trades(config.RECENT_TRADES_FOR_CONTEXT)
 
     # Deterministic regime read (free): frames the brain AND caps gross exposure.
     regime = signals.market_regime(bars, rows)
+    if scan_result:
+        print(f"\nscan       : {scan_result['scanned']:,} names scanned, "
+              f"{scan_result['eligible']:,} liquid enough to trade")
     print(f"\nregime     : {regime['note']}")
     print(f"gross cap  : {regime['gross_cap']:.0%} of equity")
 

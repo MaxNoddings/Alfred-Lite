@@ -30,7 +30,8 @@ of equity — winners are exited by the trailing stop, not by second-guessing.
 
 | Module | Role |
 |---|---|
-| `universe.py` | Dynamic universe: lean core + the day's top movers (Alpaca screener) + held names, penny-stock filtered |
+| `scan.py` | **Full-market scan**: ranks every tradable name by relative strength → shortlist |
+| `universe.py` | Assembles the run's universe: core + scan shortlist (or screener) + held names |
 | `data.py` | Daily OHLCV bars (yfinance) |
 | `signals.py` | RSI, z-score, momentum, volume + the **market-regime read** — fast, free, backtestable |
 | `brain.py` | Signals + memory + live news → a structured JSON decision per ticker |
@@ -38,6 +39,44 @@ of equity — winners are exited by the trailing stop, not by second-guessing.
 | `executor.py` | Conviction-scaled sizing + gross-exposure guard + guardrails → orders |
 | `broker.py` | `SimBroker` (offline dev) / `AlpacaBroker` (live) behind one interface |
 | `logbook.py` | Append-only trade log + the brain's recent-trade memory |
+
+## Full-market scan
+
+Alfred sees the **whole market** every run — not a fixed watchlist, and not the raw
+1-day-% "top movers" the screener used to hand it (which surfaced low-float pumps and
+near-duplicate junk: `IRE / IREX / IREG / IREZ` once ate four slots in a single run).
+
+The trick is that Alfred doesn't need to *see* thousands of stocks to *scan* thousands
+of stocks:
+
+```
+roster ~6,800  →  bulk bars  →  rank by relative strength  →  shortlist ~20  →  prompt
+```
+
+Stages 1–3 are pure arithmetic on bulk-downloaded bars — **no model calls, no added
+prompt size, no added spend**; the whole sweep takes ~30s. What changes is that the
+shortlist is drawn from every tradable name rather than from a 15-name screener call.
+
+- **Roster** — every fractionable, major-exchange US equity. Fractionable matters:
+  Alfred sizes by notional, and Alpaca only accepts notional orders on fractionable
+  assets, so a non-fractionable name is one it could rank but never buy.
+- **Ranking** — relative strength vs the benchmark over a fast (20d) and slow (60d)
+  window, not raw return. A stock up 10% in a market up 10% has earned nothing.
+- **Liquidity floor** — median $20M/day traded. This is the filter that does the real
+  work of killing junk.
+- **Leveraged/inverse ETPs excluded** — they reset daily and decay when held, and
+  unfiltered they swamp the leaderboard outright. Alfred's inverse exposure stays
+  curated (`INVERSE_ETFS`).
+- **Both ends kept** — leaders are long candidates; laggards are short candidates and a
+  standing warning about what *not* to buy. Each is flagged `leader` / `laggard` in the
+  signals table so the brain reads the ranking, not just the technicals.
+
+Bars are **split- and dividend-adjusted**. Alpaca defaults to raw, and on raw bars a
+reverse split reads as a monster rally — TZA showed `4.71 → 41.80` (+787%) raw versus
+`46.65 → 41.80` (−10.4%) adjusted, which put five reverse-split ETPs atop the market.
+
+The scan degrades safely: any failure falls back to the old screener path, and
+`USE_FULL_MARKET_SCAN = False` disables it outright.
 
 ## Market regime (deterministic — no model calls)
 
@@ -101,7 +140,11 @@ All tunables live in `alfred_lite/config.py`:
 | `INVERSE_ETFS` | SH, PSQ | -1x index ETFs — downside without shorting |
 | `REGIME_GROSS_CAP` | bull 100% / chop 60% / bear 50% | gross-exposure ceiling per regime |
 | `HIGH_VOL_ANNUALIZED` / `HIGH_VOL_GROSS_MULT` | 25% / ×0.75 | violent tape → shrink the book |
-| `MAX_MOVERS` / `MOVER_MIN_PRICE` | 15 / $5 | dynamic universe size + penny floor |
+| `MAX_MOVERS` / `MOVER_MIN_PRICE` | 15 / $5 | screener-fallback universe size + penny floor |
+| `USE_FULL_MARKET_SCAN` | `True` | scan every tradable name instead of the screener |
+| `SCAN_MIN_DOLLAR_VOLUME` | $20M/day | liquidity floor — the main junk filter |
+| `SCAN_TOP_LONGS` / `SCAN_TOP_SHORTS` | 12 / 8 | leaders + laggards handed to the brain |
+| `SCAN_RS_FAST` / `SCAN_RS_SLOW` | 20d / 60d | relative-strength windows |
 | `MAX_POSITION_PCT` / `BASE_POSITION_PCT` | 45% / 20% | conviction-sizing range |
 | `MIN_TRADE_PCT` | 2% | trade deadband — skip rebalances smaller than this % of equity (full exits exempt) |
 | `STOP_LOSS_PCT` | 8% | hard stop below avg cost |

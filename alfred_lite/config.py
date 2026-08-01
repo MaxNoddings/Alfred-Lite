@@ -26,10 +26,32 @@ WATCHLIST: list[str] = [
 INVERSE_ETFS: tuple[str, ...] = ("SH", "PSQ")
 
 # Dynamic universe: pull today's biggest movers from Alpaca's screener each run.
+# Only used when the full-market scan below is off or unavailable.
 USE_DYNAMIC_UNIVERSE = True
 MAX_MOVERS = 15             # max dynamic mover names added per run (on top of core + held)
 MOVER_MIN_PRICE = 5.0       # penny-stock floor; enforced on the real fetched close
                             # (catches junk the screener gives no price for, e.g. backfill)
+
+# ── Full-market scan (see scan.py) ───────────────────────────────────────────
+# Replaces the screener's raw 1-day % "top movers" — which surfaced low-float pumps
+# and near-duplicate junk (IRE/IREX/IREG/IREZ in a single run) — with a ranked sweep
+# of EVERY tradable name. Pure arithmetic on bulk-downloaded bars: no model calls, no
+# added prompt size, ~40s per run. Falls back to the screener on any failure.
+USE_FULL_MARKET_SCAN = True
+SCAN_LOOKBACK_DAYS = 120    # calendar days of bars pulled per name (~80 trading days)
+SCAN_BATCH_SIZE = 1000      # symbols per bulk request (~5s each)
+SCAN_FEED = "sip"           # consolidated tape. IEX sees ~3% of volume, which would
+                            # make the dollar-volume floor below meaningless.
+SCAN_ADJUSTMENT = "all"     # split + dividend adjusted. NEVER "raw" (Alpaca's default):
+                            # a reverse split then reads as a huge rally and reverse-
+                            # split ETPs take over the whole leaderboard.
+SCAN_MIN_PRICE = 5.0        # penny-stock floor
+SCAN_MIN_DOLLAR_VOLUME = 20_000_000   # median $/day — the junk filter that does the work
+SCAN_RS_FAST = 20           # relative-strength windows (trading days)
+SCAN_RS_SLOW = 60
+SCAN_RS_SLOW_WEIGHT = 0.6   # weight on the slow window — the more stable read
+SCAN_TOP_LONGS = 12         # leaders handed to the brain each run
+SCAN_TOP_SHORTS = 8         # laggards: short candidates, and what NOT to buy
 
 # ── Signal parameters (deterministic funnel) ─────────────────────────────────
 RSI_PERIOD = 14
