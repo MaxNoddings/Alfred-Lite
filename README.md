@@ -22,7 +22,8 @@ build universe → fetch prices → compute signals → read the regime → gath
 The **brain is a hybrid**: cheap, reproducible signals narrow the field, then Claude
 makes the judgment call with live context. Two model calls per run keep it cheap —
 **Haiku 4.5** gathers news (the costly web-search step, capped), **Sonnet 5** decides.
-A full run costs roughly **$0.07**. The brain's default answer is **hold**: it only
+A full run costs roughly **$0.07–0.15** (the web-search step dominates; the free
+deterministic scan and regime read add nothing). The brain's default answer is **hold**: it only
 speaks when a thesis breaks, a real catalyst appears, or a resize is worth ≥5 points
 of equity — winners are exited by the trailing stop, not by second-guessing.
 

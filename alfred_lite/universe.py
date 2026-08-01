@@ -102,8 +102,11 @@ def build(held_tickers: list[str] | None = None) -> tuple[list[str], dict]:
     _extend(config.WATCHLIST)                  # core anchor — always present
 
     scan_result: dict = {}
+    # The scan needs Alpaca DATA keys, not the Alpaca broker — so it also runs under
+    # BROKER=sim, which is how a full run is rehearsed against the real market safely.
+    has_keys = bool(config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY)
     live = config.BROKER == "alpaca" and config.ALPACA_API_KEY
-    if config.USE_FULL_MARKET_SCAN and live:
+    if config.USE_FULL_MARKET_SCAN and has_keys:
         from . import scan
         scan_result = scan.run()
         if scan_result:
