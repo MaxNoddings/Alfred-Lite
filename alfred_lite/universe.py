@@ -81,8 +81,14 @@ def enforce_price_floor(rows: list[dict], held_tickers: list[str] | None = None)
     return kept
 
 
-def build(held_tickers: list[str] | None = None) -> list[str]:
-    """Return the run's universe: core + movers + held, deduped (core first, held last)."""
+def build(held_tickers: list[str] | None = None) -> tuple[list[str], dict]:
+    """Return (universe, scan_result) for this run — core first, held last.
+
+    The middle of the universe comes from the full-market scan when it is enabled and
+    working (leaders + laggards ranked out of every tradable name), and from Alpaca's
+    top-mover screener otherwise. `scan_result` is {} whenever the screener was used,
+    so callers can tell which path ran.
+    """
     universe: list[str] = []
     seen: set[str] = set()
 
@@ -95,7 +101,25 @@ def build(held_tickers: list[str] | None = None) -> list[str]:
 
     _extend(config.WATCHLIST)                  # core anchor — always present
 
-    if config.USE_DYNAMIC_UNIVERSE and config.BROKER == "alpaca" and config.ALPACA_API_KEY:
+    scan_result: dict = {}
+    # The scan needs Alpaca DATA keys, not the Alpaca broker — so it also runs under
+    # BROKER=sim, which is how a full run is rehearsed against the real market safely.
+    has_keys = bool(config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY)
+    live = config.BROKER == "alpaca" and config.ALPACA_API_KEY
+    if config.USE_FULL_MARKET_SCAN and has_keys:
+        from . import scan
+        scan_result = scan.run()
+        if scan_result:
+            log.info(
+                "universe: +%d leaders +%d laggards from %d scanned names",
+                len(scan_result["leaders"]), len(scan_result["laggards"]),
+                scan_result["scanned"],
+            )
+            _extend(scan_result["leaders"])
+            _extend(scan_result["laggards"])
+
+    # Screener fallback: only when the scan is off or came back empty.
+    if not scan_result and config.USE_DYNAMIC_UNIVERSE and live:
         try:
             movers = _screener_movers()
             log.info("universe: +%d movers from screener", len(movers))
@@ -105,4 +129,4 @@ def build(held_tickers: list[str] | None = None) -> list[str]:
 
     _extend(held_tickers or [])                # always keep what we own
     log.info("universe: %d names", len(universe))
-    return universe
+    return universe, scan_result
