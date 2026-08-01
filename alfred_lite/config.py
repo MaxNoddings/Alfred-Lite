@@ -73,6 +73,17 @@ REGIME_SMA_FAST = 50        # price vs this = intermediate trend
 REGIME_SMA_SLOW = 200       # price vs this = primary trend
 REGIME_VOL_WINDOW = 20      # lookback for realized volatility
 REGIME_BREADTH_MIN = 0.45   # fraction of the universe trending up required for "bull"
+REGIME_CONFIRM_DAYS = 3     # HYSTERESIS: a new trend label must hold this many sessions
+                            # before Alfred acts on it. Without it the raw label flips on
+                            # noise — SPY sitting 0.3% from its 50-day produced 41 regime
+                            # changes in 548 days, 10 of them lasting a single day, each
+                            # yanking the gross cap 100%->60%->100%. That is the trade
+                            # churn we already fixed, one level up. K=3 cuts it to 18
+                            # flips and kills every 1-day run while leaving the regime
+                            # mix almost unchanged (76/15/9 -> 78/13/9), i.e. it removes
+                            # noise, not signal. Higher K adds lag entering a bear — the
+                            # expensive direction to be late in.
+REGIME_LABEL_WINDOW = 40    # trailing sessions evaluated to find the confirmed label
 HIGH_VOL_ANNUALIZED = 0.25  # 20d realized vol at/above this = a high-volatility tape
 HIGH_VOL_GROSS_MULT = 0.75  # ...which shrinks the regime's gross cap by this factor
 

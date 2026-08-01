@@ -94,6 +94,16 @@ volatility, and universe breadth:
 | **bear** | below both SMAs | 50% |
 | *high vol* | 20-day realized vol ≥ 25% (any regime) | ×0.75 |
 
+**A new label must hold for 3 sessions before Alfred acts on it.** Without that
+hysteresis the raw reading flips on noise: SPY sitting a fraction of a percent from its
+50-day produced **41 regime changes in 548 days, 10 lasting a single day**, each yanking
+the gross cap 100% → 60% → 100%. That is the trade churn we already fixed, one level up.
+Confirmation cuts it to 18 changes and eliminates every 1-day run, while leaving the
+regime mix almost unchanged (76/15/9 → 78/13/9) — it removes noise, not signal. The raw
+reading is still reported (`raw_label`, `confirmed`) so a pending switch is visible
+rather than hidden. Breadth stays a *same-day* veto: a tape can be technically above its
+averages while almost nothing participates, and that is not a bull market to lean into.
+
 The label is passed to the brain as context **and** enforced as a gross-exposure
 ceiling in the executor — guidance the model can reason about but cannot overrule. The
 cap scales only *new* targets, so a tight regime throttles fresh risk without ever
@@ -141,6 +151,7 @@ All tunables live in `alfred_lite/config.py`:
 | `INVERSE_ETFS` | SH, PSQ | -1x index ETFs — downside without shorting |
 | `REGIME_GROSS_CAP` | bull 100% / chop 60% / bear 50% | gross-exposure ceiling per regime |
 | `HIGH_VOL_ANNUALIZED` / `HIGH_VOL_GROSS_MULT` | 25% / ×0.75 | violent tape → shrink the book |
+| `REGIME_CONFIRM_DAYS` | 3 | sessions a new regime must hold before Alfred acts on it |
 | `MAX_MOVERS` / `MOVER_MIN_PRICE` | 15 / $5 | screener-fallback universe size + penny floor |
 | `USE_FULL_MARKET_SCAN` | `True` | scan every tradable name instead of the screener |
 | `SCAN_MIN_DOLLAR_VOLUME` | $20M/day | liquidity floor — the main junk filter |

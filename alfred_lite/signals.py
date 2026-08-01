@@ -112,6 +112,8 @@ def compute_signals(bars: dict) -> list[dict]:
 def _unknown_regime(why: str) -> dict:
     return {
         "label": "unknown",
+        "raw_label": "unknown",
+        "confirmed": True,
         "high_vol": False,
         "gross_cap": min(config.REGIME_GROSS_CAP["unknown"], config.MAX_GROSS_EXPOSURE),
         "price": None,
@@ -121,6 +123,42 @@ def _unknown_regime(why: str) -> dict:
         "breadth": None,
         "note": f"regime unknown ({why}) — trading without a regime view",
     }
+
+
+def _trend_label(price, sma_fast, sma_slow) -> str:
+    """bull / chop / bear from price vs the two moving averages.
+
+    With no 200-day available the primary trend is unknowable, so it falls back to the
+    intermediate one rather than inventing a bearish reading from missing data.
+    """
+    above_fast = price > sma_fast
+    above_slow = price > sma_slow if sma_slow is not None and sma_slow == sma_slow else above_fast
+    if above_fast and above_slow:
+        return "bull"
+    if not above_fast and not above_slow:
+        return "bear"
+    return "chop"
+
+
+def _confirmed_label(labels: list[str], k: int) -> str:
+    """The most recent label that sustained a k-session run — the hysteresis filter.
+
+    A raw label that flickers for a day or two never takes effect; Alfred keeps acting
+    on the last regime that actually held. Stateless and deterministic: derived purely
+    from the price series, so it needs no sidecar and stays backtestable.
+    """
+    if not labels:
+        return "unknown"
+    confirmed, run_label, run_len = labels[0], labels[0], 1
+    for i, lab in enumerate(labels):
+        if i:
+            if lab == run_label:
+                run_len += 1
+            else:
+                run_label, run_len = lab, 1
+        if run_len >= k:
+            confirmed = run_label
+    return confirmed
 
 
 def market_regime(bars: dict, rows: list[dict] | None = None) -> dict:
@@ -172,17 +210,31 @@ def market_regime(bars: dict, rows: list[dict] | None = None) -> dict:
         if trending else None
     )
 
-    above_fast = price > sma_fast
-    # With <200 bars the primary trend is unknowable; fall back to the intermediate one
-    # rather than inventing a bearish reading from missing data.
-    above_slow = price > sma_slow if sma_slow is not None else above_fast
-    broad_enough = breadth is None or breadth >= config.REGIME_BREADTH_MIN
+    # Trend label over a trailing window, then hysteresis: Alfred acts on the last
+    # label that HELD for REGIME_CONFIRM_DAYS, not on today's raw reading. The trend is
+    # the flippy part (price hugging its 50-day), so that is what gets damped.
+    fast_series = close.rolling(config.REGIME_SMA_FAST).mean()
+    slow_series = (
+        close.rolling(config.REGIME_SMA_SLOW).mean()
+        if len(close) >= config.REGIME_SMA_SLOW
+        else None
+    )
+    window = min(config.REGIME_LABEL_WINDOW, len(close) - config.REGIME_SMA_FAST)
+    history: list[str] = []
+    for i in range(len(close) - max(window, 1), len(close)):
+        f = _num(fast_series.iloc[i])
+        if f is None:
+            continue
+        s = _num(slow_series.iloc[i]) if slow_series is not None else None
+        history.append(_trend_label(float(close.iloc[i]), f, s))
 
-    if above_fast and above_slow and broad_enough:
-        label = "bull"
-    elif not above_fast and not above_slow:
-        label = "bear"
-    else:
+    raw_label = history[-1] if history else _trend_label(price, sma_fast, sma_slow)
+    label = _confirmed_label(history, config.REGIME_CONFIRM_DAYS) if history else raw_label
+
+    # Breadth is a same-day veto, not part of the damped trend: a tape can be
+    # technically above its averages while almost nothing participates, and that is
+    # not a bull market to lean into.
+    if label == "bull" and breadth is not None and breadth < config.REGIME_BREADTH_MIN:
         label = "chop"
 
     high_vol = realized_vol is not None and realized_vol >= config.HIGH_VOL_ANNUALIZED
@@ -193,17 +245,24 @@ def market_regime(bars: dict, rows: list[dict] | None = None) -> dict:
 
     bits = [
         f"{config.REGIME_BENCHMARK} {price:.2f}",
-        f"{'above' if above_fast else 'below'} 50d ({sma_fast:.2f})",
-        f"{'above' if above_slow else 'below'} 200d ({sma_slow:.2f})" if sma_slow
+        f"{'above' if price > sma_fast else 'below'} 50d ({sma_fast:.2f})",
+        f"{'above' if price > sma_slow else 'below'} 200d ({sma_slow:.2f})" if sma_slow
         else "200d n/a",
     ]
     if realized_vol is not None:
         bits.append(f"20d vol {realized_vol:.0%}{' — HIGH' if high_vol else ''}")
     if breadth is not None:
         bits.append(f"breadth {breadth:.0%} trending up")
+    if raw_label != label:
+        bits.append(
+            f"today reads {raw_label} but has not held {config.REGIME_CONFIRM_DAYS} "
+            f"sessions — staying {label}"
+        )
 
     return {
         "label": label,
+        "raw_label": raw_label,
+        "confirmed": raw_label == label,
         "high_vol": high_vol,
         "gross_cap": round(gross_cap, 4),
         "price": round(price, 2),
