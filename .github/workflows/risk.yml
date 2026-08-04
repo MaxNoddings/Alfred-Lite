@@ -44,7 +44,17 @@ jobs:
           if [ -n "$(git status --porcelain trades.csv risk_state.json)" ]; then
             git add trades.csv risk_state.json
             git commit -m "Risk sweep [skip ci]"
-            git push
+            # workflow_dispatch pins the checkout SHA at dispatch time, so a run that
+            # queued behind another push (the hourly trade run) starts one commit
+            # behind main and its push is rejected. Rebase onto main and retry;
+            # -X theirs keeps THIS run's state files on conflict (rebase swaps the
+            # sides: "theirs" = our commit), which is right because our snapshot is
+            # newer — and trades.csv is protected separately by merge=union.
+            n=0
+            until git push; do
+              n=$((n+1)); [ "$n" -ge 3 ] && exit 1
+              git pull --rebase -X theirs origin main
+            done
           else
             echo "no risk exits — nothing to log"
           fi

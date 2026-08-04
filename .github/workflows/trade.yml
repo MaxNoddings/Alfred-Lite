@@ -43,7 +43,13 @@ jobs:
           if [ -n "$(git status --porcelain trades.csv risk_state.json)" ]; then
             git add trades.csv risk_state.json
             git commit -m "Log trades [skip ci]"
-            git push
+            # Same push-race guard as risk.yml: workflow_dispatch pins the checkout
+            # SHA at dispatch time, so a queued run can start one commit behind main.
+            n=0
+            until git push; do
+              n=$((n+1)); [ "$n" -ge 3 ] && exit 1
+              git pull --rebase -X theirs origin main
+            done
           else
             echo "no new trades to log"
           fi
