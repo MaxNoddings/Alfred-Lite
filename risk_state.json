@@ -1,9 +1,4 @@
 {
-  "ASST": {
-    "side": "long",
-    "entry": 29.88,
-    "peak": 31.939994950104406
-  },
   "KOD": {
     "side": "long",
     "entry": 93.28,
@@ -12,7 +7,7 @@
   "GRAL": {
     "side": "long",
     "entry": 134.4,
-    "peak": 142.28996384794596
+    "peak": 142.76000629083163
   },
   "MRNA": {
     "side": "long",
