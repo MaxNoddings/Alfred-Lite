@@ -4,11 +4,25 @@ version = "0.1.0"
 description = "A lightweight, Claude-powered paper-trading bot."
 readme = "README.md"
 requires-python = ">=3.12"
+# Direct dependencies are pinned EXACTLY (==), never ranges. With ">=" every CI run
+# installed whatever was newest, so a new major release (anthropic 2.0.0) went straight
+# onto the live bot untested and failed a trading run on 2026-10-21 — and CI was on
+# 2.2.0 two days later. Upgrading is now a deliberate act — bump the pin here, then:
+#     uv lock && uv export --frozen --no-dev --no-emit-project --output-file requirements.txt
+# test, and commit pyproject.toml + uv.lock + requirements.txt together. Never hand-edit
+# requirements.txt: it is generated from uv.lock, which is what keeps CI and local identical.
 dependencies = [
-    "anthropic>=0.40.0",
-    "alpaca-py>=0.30.0",
-    "yfinance>=0.2.40",
-    "pandas>=2.0.0",
-    "numpy>=1.25.0",
-    "python-dotenv>=1.0.0",
+    "anthropic==2.2.0",
+    "alpaca-py==0.44.0",
+    "yfinance==1.7.0",
+    "pandas==3.1.0",
+    "numpy==2.5.4",
+    "python-dotenv==1.2.4",
+]
+
+# Local-only tooling. Excluded from requirements.txt (uv export --no-dev), so CI never
+# installs it. pyarrow backs the backtest's on-disk parquet cache.
+[dependency-groups]
+dev = [
+    "pyarrow==25.0.0",
 ]
