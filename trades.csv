@@ -211,3 +211,4 @@ timestamp,ticker,action,side,notional,price,qty,confidence,reasoning,market_note
 2026-10-29T15:35:26+00:00,LQDA,exit,sell,26600.95,44.6,596.4339,,"risk exit: trailing_stop (peak +39.2% from entry, now +28.6% on cost)",risk sweep,108219.19,39558.46
 2026-10-30T16:45:30+00:00,TEAM,exit,sell,20627.52,190.88,108.0654,,risk exit: stop_loss (-8.8%),risk sweep,106705.15,66057.46
 2026-11-05T14:45:26+00:00,TSLA,exit,sell,17643.68,353.22,49.951,,risk exit: stop_loss (-10.8%),risk sweep,104328.74,86684.54
+2026-11-11T16:01:47+00:00,AAPL,buy,buy,20867.01,353.67,59.0014,0.55,"China Renaissance upgrade to Buy with $425 PT (20% upside) plus steady capex discipline is a fresh concrete catalyst on a clean momentum leader, sized moderately given choppy tape.","Choppy market below 50d but above 200d; staying mostly in cash with one catalyst-backed AAPL long, avoiding the NVDA scandal-driven knife and the cluster of wildly volatile low-quality tickers.",104335.05,104335.05
